@@ -14,6 +14,7 @@ from .config import Config, data_dir
 from .devices import AudioWatcher
 from .island import Island
 from .mascot import Mascot
+from .media import AVAILABLE as MEDIA_OK
 from .media import MediaService
 from .power import PowerMonitor
 from .settings import SettingsWindow
@@ -76,6 +77,8 @@ def run() -> int:
 
     hooks_ok = hub.start()
     media.start()
+    if not MEDIA_OK:
+        logging.warning("Windows media controls are unavailable; the Music tab will stay empty")
 
     power = PowerMonitor()
     power.changed.connect(

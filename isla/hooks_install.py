@@ -11,18 +11,42 @@ EVENTS = [
     "SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse",
     "Notification", "PermissionRequest", "Stop", "SessionEnd",
 ]
-MARKER = "isla_hook.py"
+MARKERS = ("isla_hook.py", "isla-hook.exe")  # script when run from source, small exe when packaged
+MARKER = MARKERS[0]
 HOOK_SCRIPT = Path(__file__).resolve().parent.parent / "hooks" / MARKER
 SETTINGS = Path.home() / ".claude" / "settings.json"
 
 
+def frozen() -> bool:
+    return bool(getattr(sys, "frozen", False))
+
+
+def packaged_hook_exe() -> Path:
+    """The relay as a standalone exe folder (bundled inside Isla.exe), copied next to Isla's data.
+
+    Claude Code runs it on every tool call, so it must start fast and not need Python installed.
+    """
+    from .config import data_dir
+
+    src = Path(getattr(sys, "_MEIPASS", ".")) / "isla-hook"  # a folder: starts ~6x faster than a one-file exe
+    dst = data_dir() / "isla-hook"
+    exe = dst / "isla-hook.exe"
+    if (src / "isla-hook.exe").exists() and (
+        not exe.exists() or exe.stat().st_size != (src / "isla-hook.exe").stat().st_size
+    ):
+        shutil.copytree(src, dst, dirs_exist_ok=True)
+    return exe
+
+
 def hook_command() -> str:
     # Forward slashes: Claude Code runs hook commands through a POSIX shell on Windows.
+    if frozen():
+        return f'"{packaged_hook_exe().as_posix()}"'
     return f'"{Path(sys.executable).as_posix()}" "{HOOK_SCRIPT.as_posix()}"'
 
 
 def _is_ours(entry: dict) -> bool:
-    return any(MARKER in h.get("command", "") for h in entry.get("hooks", []))
+    return any(m in h.get("command", "") for h in entry.get("hooks", []) for m in MARKERS)
 
 
 def merge(settings: dict, command: str) -> dict:

@@ -234,3 +234,18 @@ def test_shelf_clear_and_config_defaults(tmp_path):
     s.clear()
     assert Shelf(tmp_path / "s.json").items == []
     assert Config().welcomed is False  # first run shows the tour
+
+
+def test_packaged_build_registers_the_bundled_relay(tmp_path, monkeypatch):
+    """In Isla.exe there is no Python for Claude Code to run, so the hook must point at the bundled relay exe."""
+    import sys
+    bundle = tmp_path / "bundle" / "isla-hook"
+    bundle.mkdir(parents=True)
+    (bundle / "isla-hook.exe").write_bytes(b"MZ")
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "_MEIPASS", str(tmp_path / "bundle"), raising=False)
+    monkeypatch.setenv("APPDATA", str(tmp_path / "appdata"))
+    cmd = hooks_install.hook_command()
+    assert cmd.endswith('isla-hook/isla-hook.exe"') and "\\" not in cmd
+    assert (tmp_path / "appdata" / "Isla" / "isla-hook" / "isla-hook.exe").exists()
+    assert hooks_install.remove(hooks_install.merge({}, cmd)) == {}  # our entry is recognised and removable

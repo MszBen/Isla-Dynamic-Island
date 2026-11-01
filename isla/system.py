@@ -36,6 +36,8 @@ _RUN_NAME = "Isla"
 def _autostart_command() -> str:
     from pathlib import Path
 
+    if getattr(sys, "frozen", False):  # packaged Isla.exe
+        return f'"{Path(sys.executable).as_posix()}"'
     root = Path(__file__).resolve().parent.parent.as_posix()
     exe = Path(sys.executable.replace("python.exe", "pythonw.exe")).as_posix()
     code = f"import sys; sys.path.insert(0, r'{root}'); from isla.__main__ import main; main()"
