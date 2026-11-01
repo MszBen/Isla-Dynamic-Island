@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import json
 import os
+import select
+import socket
 import threading
 import time
 import uuid
@@ -85,9 +87,33 @@ class Approval:
     session_id: str
     tool: str
     summary: str
+    tool_input: dict = field(default_factory=dict)
+    suggestions: list = field(default_factory=list)  # Claude Code's own "always allow" updates
     id: str = field(default_factory=lambda: uuid.uuid4().hex)
-    decision: str | None = None
+    decision: str | None = None  # "deny" | "once" | "always"; None = answered elsewhere / timed out
     _done: threading.Event = field(default_factory=threading.Event, repr=False)
+
+    @property
+    def can_always(self) -> bool:
+        """'Allow always' needs a rule Claude Code suggested, or a tool where a blanket rule is sane."""
+        return bool(self.suggestions) or self.tool != "Bash"
+
+    def always_updates(self) -> list:
+        if self.suggestions:
+            return self.suggestions
+        return [{
+            "type": "addRules", "rules": [{"toolName": self.tool}],
+            "behavior": "allow", "destination": "localSettings",
+        }]
+
+
+def _client_gone(conn) -> bool:
+    """True once the hook relay has hung up (Claude Code was answered elsewhere and killed it)."""
+    try:
+        readable, _, _ = select.select([conn], [], [], 0)
+        return bool(readable) and conn.recv(1, socket.MSG_PEEK) == b""
+    except (OSError, ValueError):
+        return True
 
 
 def describe_tool(tool: str, args: dict) -> str:
@@ -170,14 +196,17 @@ class AgentHub(QObject):
                 try:
                     n = int(self.headers.get("Content-Length", 0))
                     payload = json.loads(self.rfile.read(n) or b"{}")
-                    body = hub.handle(payload)
+                    body = hub.handle(payload, self.connection)
                 except Exception:
                     body = ""
                 data = body.encode()
-                self.send_response(200)
-                self.send_header("Content-Length", str(len(data)))
-                self.end_headers()
-                self.wfile.write(data)
+                try:
+                    self.send_response(200)
+                    self.send_header("Content-Length", str(len(data)))
+                    self.end_headers()
+                    self.wfile.write(data)
+                except OSError:
+                    pass  # relay already hung up (answered elsewhere)
 
             def log_message(self, *a) -> None:
                 pass
@@ -196,37 +225,63 @@ class AgentHub(QObject):
             self._server.server_close()
 
     # -- event handling (server threads) ---------------------------------
-    def handle(self, payload: dict) -> str:
+    def handle(self, payload: dict, conn=None) -> str:
         """Process one hook payload; returns the hook's stdout JSON ('' = no opinion)."""
         event = payload.get("hook_event_name", "")
         with self._lock:
             s = apply_event(self.sessions, payload)
+        self._dismiss_answered(payload)
         self.sessions_changed.emit()
         if s and event == "Stop":
             self.attention.emit("done", f"{s.project} finished")
         elif s and event == "Notification":
             self.attention.emit("waiting", f"{s.project}: {s.activity}")
         if event == "PermissionRequest":
-            return self._ask(payload)
+            return self._ask(payload, conn)
         return ""
 
-    def _ask(self, payload: dict) -> str:
+    def _dismiss_answered(self, payload: dict) -> None:
+        """A request answered in Claude (terminal / desktop app) leaves the island: the tool ran, or the turn moved on."""
+        sid = str(payload.get("session_id") or "unknown")
+        event = payload.get("hook_event_name", "")
+        for ap in list(self._pending.values()):
+            if ap.session_id != sid:
+                continue
+            if event in ("Stop", "UserPromptSubmit", "SessionEnd") or (
+                event == "PostToolUse"
+                and payload.get("tool_name") == ap.tool
+                and (payload.get("tool_input") or {}) == ap.tool_input
+            ):
+                ap._done.set()  # decision stays None -> relay gets "no opinion"
+
+    def _ask(self, payload: dict, conn=None) -> str:
         tool = payload.get("tool_name", "")
+        tool_input = payload.get("tool_input") or {}
         ap = Approval(
             session_id=str(payload.get("session_id")),
             tool=tool,
-            summary=describe_tool(tool, payload.get("tool_input") or {}),
+            summary=describe_tool(tool, tool_input),
+            tool_input=tool_input,
+            suggestions=list(payload.get("permission_suggestions") or []),
         )
         self._pending[ap.id] = ap
         self.approval_requested.emit(ap)
-        answered = ap._done.wait(self.approval_timeout)
+        deadline = time.monotonic() + self.approval_timeout
+        answered = False
+        while not answered and time.monotonic() < deadline:
+            answered = ap._done.wait(min(0.3, max(0.0, deadline - time.monotonic())))
+            if not answered and conn is not None and _client_gone(conn):
+                break
         self._pending.pop(ap.id, None)
         self.approval_finished.emit(ap.id)
-        if not answered or ap.decision not in ("allow", "deny"):
-            return ""  # fall back to Claude Code's own prompt
-        decision: dict = {"behavior": ap.decision}
+        if not answered or ap.decision not in ("allow", "once", "always", "deny"):
+            return ""  # answered elsewhere, timed out, or relay gone: Claude Code's own prompt decides
         if ap.decision == "deny":
-            decision["message"] = "Denied from Isla"
+            decision: dict = {"behavior": "deny", "message": "Denied from Isla"}
+        else:
+            decision = {"behavior": "allow"}
+            if ap.decision == "always" and ap.can_always:
+                decision["updatedPermissions"] = ap.always_updates()
         return json.dumps(
             {"hookSpecificOutput": {"hookEventName": "PermissionRequest", "decision": decision}}
         )

@@ -42,7 +42,7 @@ AMBER = QColor("#FFC857")
 RED = QColor("#FF6B6B")
 FONT = "Segoe UI"
 
-SIZES = {"expanded": (500, 248), "approval": (470, 132), "toast": (330, 44)}
+SIZES = {"expanded": (500, 248), "approval": (470, 132), "toast": (330, 44), "peek": (350, 58)}
 TABS = ("Music", "Shelf", "Agents")
 STATUS_COLOR = {"idle": DIM, "working": ACCENT, "waiting": AMBER, "done": GREEN}
 
@@ -82,6 +82,7 @@ class Island(QWidget):
         self._claude = None  # Session while Claude is working
         self.accent = ACCENT
         self._toast: tuple[str, str] | None = None
+        self._peek: tuple[str, str, str, int, float] | None = None  # kind, title, subtitle, percent, start
         self.tab = "Music"
         self._hover = False
         self._dropping = False
@@ -138,6 +139,8 @@ class Island(QWidget):
             return "approval"
         if self._hover or self._dropping:
             return "expanded"
+        if self._peek:
+            return "peek"
         if self._toast:
             return "toast"
         return "compact"
@@ -310,6 +313,22 @@ class Island(QWidget):
         self._apply_mode()
         self._kick()
 
+    def show_peek(self, kind: str, title: str, subtitle: str = "", percent: int = 0, seconds: float = 3.4) -> None:
+        """Brief status animation: kind is 'charging' | 'battery' | 'headphones' | 'headphones_off'."""
+        if not self.cfg.status_peeks:
+            return
+        peek = (kind, title, subtitle, percent, time.monotonic())
+        self._peek = peek
+        self.mascot.flash("love" if kind == "headphones" else "happy", seconds)
+        QTimer.singleShot(int(seconds * 1000), lambda: self._clear_peek(peek))
+        self._apply_mode()
+        self._kick()
+
+    def _clear_peek(self, peek) -> None:
+        if self._peek is peek:
+            self._peek = None
+            self._apply_mode()
+
     def _clear_toast(self) -> None:
         self._toast = None
         self._apply_mode()
@@ -428,7 +447,7 @@ class Island(QWidget):
             self._media_stamp, self.media.position = time.monotonic(), t
         elif kind == "remove":
             self.shelf.remove(arg)
-        elif kind in ("allow", "deny"):
+        elif kind in ("deny", "once", "always"):
             self.hub.resolve(arg, kind)
         self.update()
 
@@ -489,6 +508,7 @@ class Island(QWidget):
         {
             "compact": self._paint_compact,
             "toast": self._paint_toast,
+            "peek": self._paint_peek,
             "approval": self._paint_approval,
             "expanded": self._paint_expanded,
         }[mode](p, r)
@@ -539,6 +559,83 @@ class Island(QWidget):
         p.drawEllipse(QPointF(54, r.height() / 2), 4, 4)
         self._text(p, QRectF(66, 0, r.width() - 80, r.height()), text, size=10, bold=True)
 
+    def _paint_peek(self, p, r: QRectF) -> None:
+        kind, title, sub, pct, start = self._peek or ("", "", "", 0, time.monotonic())
+        t = time.monotonic() - start
+        h = r.height()
+        if kind in ("charging", "battery"):
+            self._paint_battery(p, QRectF(16, h / 2 - 11, 40, 22), kind == "charging", pct, t)
+            self._text(p, QRectF(70, 8, r.width() - 150, 22), title, TEXT, 11, True)
+            self._text(p, QRectF(70, 29, r.width() - 150, 20), sub, DIM, 9)
+            self._text(p, QRectF(r.width() - 80, 0, 62, h), f"{pct}%", TEXT, 16, True, Qt.AlignRight)
+        else:
+            m = QRectF(14, h / 2 - 18, 36, 36)
+            self.mascot.paint(p, m)
+            if kind == "headphones":
+                self._paint_headphones(p, m)
+                self._paint_waves(p, QPointF(r.width() - 30, h / 2), t)
+            else:
+                self._paint_headphones(p, m, dim=True)
+            self._text(p, QRectF(62, 8, r.width() - 110, 22), title, TEXT, 11, True)
+            self._text(p, QRectF(62, 29, r.width() - 110, 20), sub, DIM, 9)
+
+    @staticmethod
+    def _paint_headphones(p, m: QRectF, dim: bool = False) -> None:
+        p.save()
+        p.setRenderHint(QPainter.Antialiasing)
+        col = QColor(DIM) if dim else QColor(TEXT)
+        p.setBrush(Qt.NoBrush)
+        p.setPen(QPen(col, 3.4, Qt.SolidLine, Qt.RoundCap))
+        p.drawArc(QRectF(m.left() + 3, m.top() + 1, m.width() - 6, m.height() * 0.8), 0, 180 * 16)
+        p.setPen(Qt.NoPen)
+        p.setBrush(QColor("#6E5BD6") if not dim else QColor(DIM).darker(150))
+        cy = m.center().y()
+        p.drawRoundedRect(QRectF(m.left() - 1, cy - 8, 9, 17), 3.5, 3.5)
+        p.drawRoundedRect(QRectF(m.right() - 8, cy - 8, 9, 17), 3.5, 3.5)
+        p.restore()
+
+    @staticmethod
+    def _paint_waves(p, c: QPointF, t: float) -> None:
+        p.save()
+        p.setBrush(Qt.NoBrush)
+        for i in range(3):
+            phase = (t * 1.6 - i * 0.28) % 1.0
+            alpha = int(255 * (1 - phase) * min(1.0, t * 3))
+            p.setPen(QPen(QColor(185, 167, 255, alpha), 2.2, Qt.SolidLine, Qt.RoundCap))
+            rad = 5 + phase * 16
+            p.drawArc(QRectF(c.x() - rad, c.y() - rad, rad * 2, rad * 2), -50 * 16, 100 * 16)
+        p.restore()
+
+    @staticmethod
+    def _paint_battery(p, body: QRectF, charging: bool, pct: int, t: float) -> None:
+        p.save()
+        p.setRenderHint(QPainter.Antialiasing)
+        p.setPen(QPen(TEXT, 2))
+        p.setBrush(Qt.NoBrush)
+        p.drawRoundedRect(body, 6, 6)
+        p.setPen(Qt.NoPen)
+        p.setBrush(TEXT)
+        p.drawRoundedRect(QRectF(body.right() + 2, body.center().y() - 4, 3.5, 8), 1.5, 1.5)
+        ease = 1 - (1 - min(t / 0.7, 1.0)) ** 3  # fill rises on arrival
+        frac = max(0.06, pct / 100) * ease
+        color = GREEN if charging or pct > 20 else RED
+        if charging:
+            color = QColor(color)
+            color.setAlphaF(0.75 + 0.25 * math.sin(t * 5))
+        inner = body.adjusted(3.5, 3.5, -3.5, -3.5)
+        p.setBrush(color)
+        p.drawRoundedRect(QRectF(inner.left(), inner.top(), inner.width() * frac, inner.height()), 3, 3)
+        if charging and t > 0.15:
+            c = body.center()
+            bolt = QPolygonF([
+                QPointF(c.x() + 2, c.y() - 9), QPointF(c.x() - 6, c.y() + 1.5), QPointF(c.x() - 0.5, c.y() + 1.5),
+                QPointF(c.x() - 2, c.y() + 9), QPointF(c.x() + 6, c.y() - 2), QPointF(c.x() + 0.5, c.y() - 2),
+            ])
+            p.setPen(QPen(BG, 1.4))
+            p.setBrush(QColor("#FFF3B0"))
+            p.drawPolygon(bolt)
+        p.restore()
+
     def _paint_approval(self, p, r: QRectF) -> None:
         ap = self.approvals[0]
         self._mascot_at(p, QRectF(16, 16, 36, 36))
@@ -548,18 +645,29 @@ class Island(QWidget):
         if len(self.approvals) > 1:
             self._text(p, QRectF(r.width() - 90, 14, 74, 22), f"+{len(self.approvals) - 1} more", DIM, 9, align=Qt.AlignRight)
         self._text(p, QRectF(66, 38, r.width() - 82, 22), ap.summary, DIM, 10)
-        deny = QRectF(r.width() - 200, r.height() - 46, 86, 32)
-        allow = QRectF(r.width() - 106, r.height() - 46, 86, 32)
-        p.setPen(QPen(DIM, 1.2))
+        # Deny | Allow always | Allow once (default, emphasised)
+        y = r.height() - 48
+        once = QRectF(r.width() - 18 - 124, y - 1, 124, 36)
+        always = QRectF(once.left() - 8 - 108, y + 1, 108, 32)
+        deny = QRectF(always.left() - 8 - 70, y + 1, 70, 32)
         p.setBrush(Qt.NoBrush)
+        p.setPen(QPen(DIM, 1.2))
         p.drawRoundedRect(deny, 16, 16)
         self._text(p, deny, "Deny", TEXT, 10, align=Qt.AlignHCenter)
-        p.setPen(Qt.NoPen)
-        p.setBrush(ACCENT)
-        p.drawRoundedRect(allow, 16, 16)
-        self._text(p, allow, "Allow", BG, 10, True, Qt.AlignHCenter)
+        ok = ap.can_always
+        p.setPen(QPen(self.accent if ok else QColor(255, 255, 255, 30), 1.2))
+        p.drawRoundedRect(always, 16, 16)
+        self._text(p, always, "Allow always", self.accent if ok else DIM, 10, align=Qt.AlignHCenter)
+        halo = QColor(self.accent)
+        halo.setAlpha(60)
+        p.setPen(QPen(halo, 3))
+        p.setBrush(self.accent)
+        p.drawRoundedRect(once.adjusted(-1, -1, 1, 1), 18, 18)
+        self._text(p, once, "Allow once", CLAUDE_INK if self._claude else BG, 10, True, Qt.AlignHCenter)
         self._hit_rect(deny, "deny", ap.id)
-        self._hit_rect(allow, "allow", ap.id)
+        if ok:
+            self._hit_rect(always, "always", ap.id)
+        self._hit_rect(once, "once", ap.id)
 
     def _paint_expanded(self, p, r: QRectF) -> None:
         self._mascot_at(p, QRectF(14, 8, 34, 34))

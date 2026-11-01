@@ -137,3 +137,65 @@ def test_active_session_and_no_restart_after_stop():
     assert hub.active_session() is None
     hub.handle({"session_id": "a", "hook_event_name": "PostToolUse", "tool_name": "Read"})
     assert hub.active_session() is None
+
+
+def test_allow_always_uses_claudes_own_suggestion():
+    import threading
+    from isla.agents import AgentHub
+
+    hub = AgentHub(0, approval_timeout=5)
+    sugg = [{"type": "addRules", "rules": [{"toolName": "Bash", "ruleContent": "pytest"}],
+             "behavior": "allow", "destination": "localSettings"}]
+    hub.approval_requested.connect(lambda ap: threading.Timer(0.05, hub.resolve, (ap.id, "always")).start())
+    out = json.loads(hub.handle({"session_id": "s", "hook_event_name": "PermissionRequest", "tool_name": "Bash",
+                                 "tool_input": {"command": "pytest"}, "permission_suggestions": sugg}))
+    d = out["hookSpecificOutput"]["decision"]
+    assert d["behavior"] == "allow" and d["updatedPermissions"] == sugg
+
+
+def test_allow_always_without_suggestion_is_safe():
+    from isla.agents import Approval
+    assert Approval("s", "Bash", "x").can_always is False  # never a blanket Bash rule
+    ap = Approval("s", "Edit", "x")
+    assert ap.can_always and ap.always_updates()[0]["rules"] == [{"toolName": "Edit"}]
+
+
+def test_deny_decision():
+    import threading
+    from isla.agents import AgentHub
+
+    hub = AgentHub(0, approval_timeout=5)
+    hub.approval_requested.connect(lambda ap: threading.Timer(0.05, hub.resolve, (ap.id, "deny")).start())
+    out = json.loads(hub.handle({"session_id": "s", "hook_event_name": "PermissionRequest", "tool_name": "Bash"}))
+    assert out["hookSpecificOutput"]["decision"]["behavior"] == "deny"
+
+
+def test_request_dismissed_when_answered_elsewhere():
+    import threading
+    import time
+    from isla.agents import AgentHub
+
+    hub = AgentHub(0, approval_timeout=5)
+    finished = []
+    hub.approval_finished.connect(finished.append)
+    perm = {"session_id": "s", "hook_event_name": "PermissionRequest", "tool_name": "Bash", "tool_input": {"command": "ls"}}
+    # tool ran (answered in the terminal / desktop app) -> PostToolUse for the same call
+    threading.Timer(0.1, hub.handle, ({"session_id": "s", "hook_event_name": "PostToolUse",
+                                       "tool_name": "Bash", "tool_input": {"command": "ls"}},)).start()
+    t0 = time.monotonic()
+    assert hub.handle(perm) == ""
+    assert time.monotonic() - t0 < 2 and len(finished) == 1
+
+
+def test_request_dismissed_when_relay_hangs_up():
+    import socket
+    import threading
+    import time
+    from isla.agents import AgentHub
+
+    hub = AgentHub(0, approval_timeout=5)
+    server_side, client_side = socket.socketpair()
+    threading.Timer(0.1, client_side.close).start()  # Claude Code killed the hook
+    t0 = time.monotonic()
+    assert hub.handle({"session_id": "s", "hook_event_name": "PermissionRequest", "tool_name": "Read"}, server_side) == ""
+    assert time.monotonic() - t0 < 2
