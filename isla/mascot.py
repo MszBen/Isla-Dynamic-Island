@@ -18,6 +18,7 @@ EMOTIONS = ("idle", "happy", "curious", "focused", "wink", "love", "dizzy", "sle
 class Mascot:
     def __init__(self) -> None:
         self.emotion = "idle"
+        self.body = BODY  # tinted by the island while Claude is working
         self._until = 0.0  # temporary emotion expiry
         self._rest = "idle"
         self._next_blink = time.monotonic() + 2
@@ -80,7 +81,7 @@ class Mascot:
         body = QPainterPath()
         body.addRoundedRect(QRectF(-40, -34, 80, 70), 32, 30)
         p.setPen(Qt.NoPen)
-        p.setBrush(BODY)
+        p.setBrush(self.body)
         p.drawPath(body)
         p.setBrush(QColor(255, 255, 255, 60))  # highlight
         p.drawEllipse(QRectF(-26, -26, 20, 10))

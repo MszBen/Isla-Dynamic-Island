@@ -106,3 +106,34 @@ def test_is_headphones():
     from isla.devices import is_headphones
     assert is_headphones("Headphones (WH-1000XM5 Hands-Free)")
     assert not is_headphones("Speakers (Realtek Audio)")
+
+
+def test_transcript_usage_and_run_tokens(tmp_path):
+    from isla.agents import Session, transcript_usage
+    assert transcript_usage({"type": "user"}) is None
+    f = tmp_path / "t.jsonl"
+    old = {"type": "assistant", "message": {"id": "m0", "usage": {"input_tokens": 999, "output_tokens": 1}}}
+    f.write_text(json.dumps(old) + "\n")
+    s = Session("a", transcript=str(f))
+    s.start_run()  # baseline: earlier history isn't counted
+    a1 = {"type": "assistant", "message": {"id": "m1", "usage": {"input_tokens": 10, "output_tokens": 5, "cache_creation_input_tokens": 100, "cache_read_input_tokens": 9999}}}
+    a1b = {"type": "assistant", "message": {"id": "m1", "usage": {"input_tokens": 10, "output_tokens": 20, "cache_creation_input_tokens": 100}}}
+    with open(f, "a") as fh:
+        fh.write(json.dumps(a1) + "\n" + json.dumps(a1b) + "\n" + '{"type": "assist')  # partial last line
+    s.read_tokens()
+    assert s.tokens == 130  # same message id counted once (max), cache reads excluded
+    with open(f, "a") as fh:
+        fh.write('ant", "message": {"id": "m2", "usage": {"output_tokens": 7}}}\n')
+    s.read_tokens()
+    assert s.tokens == 137
+
+
+def test_active_session_and_no_restart_after_stop():
+    from isla.agents import AgentHub
+    hub = AgentHub(0)
+    hub.handle({"session_id": "a", "hook_event_name": "UserPromptSubmit", "cwd": "C:/p/x"})
+    assert hub.active_session().id == "a"
+    hub.handle({"session_id": "a", "hook_event_name": "Stop"})
+    assert hub.active_session() is None
+    hub.handle({"session_id": "a", "hook_event_name": "PostToolUse", "tool_name": "Read"})
+    assert hub.active_session() is None

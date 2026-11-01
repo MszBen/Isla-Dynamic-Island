@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import threading
 import time
 import uuid
@@ -19,10 +20,64 @@ class Session:
     status: str = "idle"  # idle | working | waiting | done
     activity: str = ""
     updated: float = field(default_factory=time.time)
+    started: float | None = None  # when the current run (prompt) began
+    transcript: str = ""
+    _tx_pos: int = field(default=0, repr=False)
+    _usage: dict[str, int] = field(default_factory=dict, repr=False)
 
     @property
     def project(self) -> str:
         return PurePath(self.cwd).name or "session"
+
+    @property
+    def elapsed(self) -> float:
+        return time.time() - self.started if self.started else 0.0
+
+    @property
+    def tokens(self) -> int | None:
+        """Tokens used by this run (input + output + cache writes; cache reads excluded)."""
+        return sum(self._usage.values()) if self.transcript else None
+
+    def start_run(self) -> None:
+        self.started = time.time()
+        self._usage.clear()
+        try:
+            self._tx_pos = os.path.getsize(self.transcript) if self.transcript else 0
+        except OSError:
+            self._tx_pos = 0
+
+    def read_tokens(self) -> None:
+        """Incrementally fold new transcript lines into the run's token total."""
+        if not self.transcript:
+            return
+        try:
+            with open(self.transcript, "rb") as f:
+                f.seek(self._tx_pos)
+                chunk = f.read()
+        except OSError:
+            return
+        end = chunk.rfind(b"\n") + 1  # only whole lines
+        self._tx_pos += end
+        for raw in chunk[:end].splitlines():
+            try:
+                hit = transcript_usage(json.loads(raw))
+            except ValueError:
+                continue
+            if hit:
+                key, total = hit
+                self._usage[key] = max(self._usage.get(key, 0), total)
+
+
+def transcript_usage(entry: dict) -> tuple[str, int] | None:
+    """(message id, tokens) for an assistant transcript line, else None. Lines of one message share an id."""
+    if not isinstance(entry, dict) or entry.get("type") != "assistant":
+        return None
+    msg = entry.get("message") or {}
+    usage = msg.get("usage")
+    if not isinstance(usage, dict):
+        return None
+    total = sum(int(usage.get(k) or 0) for k in ("input_tokens", "output_tokens", "cache_creation_input_tokens"))
+    return str(msg.get("id") or entry.get("uuid") or id(entry)), total
 
 
 @dataclass
@@ -67,10 +122,16 @@ def apply_event(sessions: dict[str, Session], payload: dict) -> Session | None:
         return None
     s = sessions.setdefault(sid, Session(sid))
     s.cwd = payload.get("cwd") or s.cwd
+    s.transcript = payload.get("transcript_path") or s.transcript
     s.updated = time.time()
     if event == "UserPromptSubmit":
         s.status, s.activity = "working", "Thinking…"
+        s.start_run()
     elif event in ("PreToolUse", "PostToolUse"):
+        if s.status == "done":  # stray late event after Stop: don't restart the run
+            return s
+        if s.started is None:  # joined mid-run
+            s.start_run()
         s.status = "working"
         s.activity = describe_tool(payload.get("tool_name", ""), payload.get("tool_input") or {})
     elif event in ("Notification", "PermissionRequest"):
@@ -176,6 +237,24 @@ class AgentHub(QObject):
         if ap:
             ap.decision = decision
             ap._done.set()
+
+    def active_session(self) -> Session | None:
+        """The session Claude is currently working in (or waiting on an approval for), if any."""
+        now = time.time()
+        with self._lock:
+            asking = {a.session_id for a in list(self._pending.values())}
+            live = [
+                s for s in self.sessions.values()
+                if s.started is not None and now - s.updated < 300
+                and (s.status == "working" or s.id in asking)
+            ]
+        return max(live, key=lambda s: s.updated, default=None)
+
+    def refresh_tokens(self) -> None:
+        with self._lock:
+            for s in self.sessions.values():
+                if s.status == "working":
+                    s.read_tokens()
 
     def snapshot(self) -> list[Session]:
         with self._lock:

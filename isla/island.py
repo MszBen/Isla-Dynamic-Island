@@ -16,7 +16,7 @@ from PySide6.QtCore import (
     QPropertyAnimation, QVariantAnimation, Signal,
 )
 from PySide6.QtGui import (
-    QColor, QCursor, QDrag, QFont, QFontMetrics, QGuiApplication, QPainter, QPainterPath, QPen,
+    QColor, QCursor, QDrag, QFont, QFontMetrics, QGuiApplication, QPainter, QLinearGradient, QPainterPath, QPen,
     QPixmap, QPolygonF,
 )
 from PySide6.QtWidgets import QFileIconProvider, QWidget
@@ -24,7 +24,7 @@ from PySide6.QtWidgets import QFileIconProvider, QWidget
 from .agents import AgentHub, Approval
 from .config import Config
 from .lyrics import Line, current_index, fetch_lyrics
-from .mascot import Mascot
+from .mascot import BODY, Mascot
 from .media import MediaInfo, MediaService
 from .shelf import Shelf
 from .system import fullscreen_app_active, set_click_through
@@ -33,14 +33,28 @@ BG = QColor("#0C0B12")
 TEXT = QColor("#F2F0FA")
 DIM = QColor("#8E8AA3")
 ACCENT = QColor("#B9A7FF")
+CLAUDE = QColor("#D97757")
+CLAUDE_INK = QColor("#2A150C")
+CLAUDE_DARK = QColor("#1C120E")
+CLAUDE_PEACH = QColor("#FFE3D3")
 GREEN = QColor("#5FD38D")
 AMBER = QColor("#FFC857")
 RED = QColor("#FF6B6B")
 FONT = "Segoe UI"
 
-SIZES = {"expanded": (500, 248), "approval": (470, 132), "toast": (330, 44), "peek": (350, 58)}
+SIZES = {"expanded": (500, 248), "approval": (470, 132), "toast": (330, 44)}
 TABS = ("Music", "Shelf", "Agents")
 STATUS_COLOR = {"idle": DIM, "working": ACCENT, "waiting": AMBER, "done": GREEN}
+
+
+def fmt_minutes(seconds: float) -> str:
+    return "<1 min" if seconds < 60 else f"{int(seconds // 60)} min"
+
+
+def fmt_tokens(n: int) -> str:
+    if n < 1000:
+        return str(n)
+    return f"{n / 1000:.1f}k" if n < 1_000_000 else f"{n / 1_000_000:.2f}M"
 
 
 def fmt_time(s: float) -> str:
@@ -65,8 +79,9 @@ class Island(QWidget):
         self._pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="isla-lyrics")
 
         self.approvals: list[Approval] = []
+        self._claude = None  # Session while Claude is working
+        self.accent = ACCENT
         self._toast: tuple[str, str] | None = None
-        self._peek: tuple[str, str, str, int, float] | None = None  # kind, title, subtitle, percent, start
         self.tab = "Music"
         self._hover = False
         self._dropping = False
@@ -123,13 +138,17 @@ class Island(QWidget):
             return "approval"
         if self._hover or self._dropping:
             return "expanded"
-        if self._peek:
-            return "peek"
         if self._toast:
             return "toast"
         return "compact"
 
     def _compact_text(self) -> str:
+        if self._claude:
+            s = self._claude
+            parts = ["Claude", fmt_minutes(s.elapsed)]
+            if s.tokens is not None:
+                parts.append(f"{fmt_tokens(s.tokens)} tokens")
+            return " · ".join(parts)
         m = self.media
         if m.active and m.playing:
             i = current_index(self.lines, self._position())
@@ -180,6 +199,7 @@ class Island(QWidget):
             self._anim.state() == QVariantAnimation.Running
             or self.mascot.animating
             or self._peek is not None
+            or self._claude is not None
             or (self.media.active and self.media.playing and self.mode in ("expanded", "compact"))
         )
         self.update()
@@ -194,10 +214,26 @@ class Island(QWidget):
                 self.hide()
             elif not self.isVisible():
                 self.show()
+        self.hub.refresh_tokens()
+        self._refresh_claude()
         self._refresh_mood()
         if self.mode == "compact":
             self._apply_mode()  # clock / lyric line may have changed the width
             self.update()
+
+    def _refresh_claude(self) -> None:
+        """Claude working takes priority over music: orange theme + run stats."""
+        s = self.hub.active_session()
+        was = self._claude is not None
+        self._claude = s
+        self.accent = CLAUDE if s else ACCENT
+        self.mascot.body = CLAUDE_PEACH if s else BODY
+        if s and not was:
+            self.tab = "Agents"
+        if bool(s) != was:
+            self._apply_mode()
+            self._kick()
+        self.update()
 
     def _refresh_mood(self) -> None:
         sessions = self.hub.snapshot()
@@ -249,11 +285,13 @@ class Island(QWidget):
             self.update()
 
     def _on_agents(self) -> None:
+        self._refresh_claude()
         self._refresh_mood()
         self.update()
 
     def _on_approval(self, ap: Approval) -> None:
         self.approvals.append(ap)
+        self._refresh_claude()
         self.mascot.flash("curious", 6)
         if not self.isVisible():
             self.show()
@@ -271,22 +309,6 @@ class Island(QWidget):
         QTimer.singleShot(4000, self._clear_toast)
         self._apply_mode()
         self._kick()
-
-    def show_peek(self, kind: str, title: str, subtitle: str = "", percent: int = 0, seconds: float = 3.4) -> None:
-        """Brief status animation: kind is 'charging' | 'battery' | 'headphones' | 'headphones_off'."""
-        if not self.cfg.status_peeks:
-            return
-        peek = (kind, title, subtitle, percent, time.monotonic())
-        self._peek = peek
-        self.mascot.flash("love" if kind == "headphones" else "happy", seconds)
-        QTimer.singleShot(int(seconds * 1000), lambda: self._clear_peek(peek))
-        self._apply_mode()
-        self._kick()
-
-    def _clear_peek(self, peek) -> None:
-        if self._peek is peek:
-            self._peek = None
-            self._apply_mode()
 
     def _clear_toast(self) -> None:
         self._toast = None
@@ -454,14 +476,19 @@ class Island(QWidget):
         r = QRectF(self.rect())
         path = QPainterPath()
         path.addRoundedRect(r, min(r.height() / 2, 30), min(r.height() / 2, 30))
-        p.fillPath(path, BG)
+        mode = self.mode
+        if self._claude and mode == "compact":
+            grad = QLinearGradient(0, 0, r.width(), 0)
+            grad.setColorAt(0, QColor("#F2A987"))
+            grad.setColorAt(1, CLAUDE)
+            p.fillPath(path, grad)
+        else:
+            p.fillPath(path, CLAUDE_DARK if self._claude else BG)
         p.setClipPath(path)
 
-        mode = self.mode
         {
             "compact": self._paint_compact,
             "toast": self._paint_toast,
-            "peek": self._paint_peek,
             "approval": self._paint_approval,
             "expanded": self._paint_expanded,
         }[mode](p, r)
@@ -481,8 +508,14 @@ class Island(QWidget):
 
     def _paint_compact(self, p, r: QRectF) -> None:
         self._mascot_at(p, QRectF(10, (r.height() - 26) / 2, 26, 26))
-        playing = self.media.active and self.media.playing
-        if playing:
+        playing = self.media.active and self.media.playing and not self._claude
+        if self._claude:
+            self._text(p, QRectF(46, 0, r.width() - 46 - 36, r.height()), self._compact_text(), CLAUDE_INK, 10, True)
+            pulse = 3.2 + 1.2 * math.sin(time.monotonic() * 4)
+            p.setPen(Qt.NoPen)
+            p.setBrush(CLAUDE_INK)
+            p.drawEllipse(QPointF(r.width() - 22, r.height() / 2), pulse, pulse)
+        elif playing:
             self._text(p, QRectF(46, 0, r.width() - 46 - 40, r.height()), self._compact_text(), size=10)
         else:  # just the clock: centred in the whole pill
             self._text(p, QRectF(0, 0, r.width(), r.height()), self._compact_text(), size=10, align=Qt.AlignHCenter)
@@ -492,7 +525,7 @@ class Island(QWidget):
     def _equalizer(self, p, rect: QRectF) -> None:
         t = time.monotonic()
         p.setPen(Qt.NoPen)
-        p.setBrush(ACCENT)
+        p.setBrush(self.accent)
         for i in range(3):
             h = rect.height() * (0.35 + 0.65 * abs(math.sin(t * (3 + i * 1.3) + i)))
             p.drawRoundedRect(QRectF(rect.left() + i * 7, rect.bottom() - h, 4, h), 2, 2)
@@ -505,83 +538,6 @@ class Island(QWidget):
         p.setBrush(color)
         p.drawEllipse(QPointF(54, r.height() / 2), 4, 4)
         self._text(p, QRectF(66, 0, r.width() - 80, r.height()), text, size=10, bold=True)
-
-    def _paint_peek(self, p, r: QRectF) -> None:
-        kind, title, sub, pct, start = self._peek or ("", "", "", 0, time.monotonic())
-        t = time.monotonic() - start
-        h = r.height()
-        if kind in ("charging", "battery"):
-            self._paint_battery(p, QRectF(16, h / 2 - 11, 40, 22), kind == "charging", pct, t)
-            self._text(p, QRectF(70, 8, r.width() - 150, 22), title, TEXT, 11, True)
-            self._text(p, QRectF(70, 29, r.width() - 150, 20), sub, DIM, 9)
-            self._text(p, QRectF(r.width() - 80, 0, 62, h), f"{pct}%", TEXT, 16, True, Qt.AlignRight)
-        else:
-            m = QRectF(14, h / 2 - 18, 36, 36)
-            self.mascot.paint(p, m)
-            if kind == "headphones":
-                self._paint_headphones(p, m)
-                self._paint_waves(p, QPointF(r.width() - 30, h / 2), t)
-            else:
-                self._paint_headphones(p, m, dim=True)
-            self._text(p, QRectF(62, 8, r.width() - 110, 22), title, TEXT, 11, True)
-            self._text(p, QRectF(62, 29, r.width() - 110, 20), sub, DIM, 9)
-
-    @staticmethod
-    def _paint_headphones(p, m: QRectF, dim: bool = False) -> None:
-        p.save()
-        p.setRenderHint(QPainter.Antialiasing)
-        col = QColor(DIM) if dim else QColor(TEXT)
-        p.setBrush(Qt.NoBrush)
-        p.setPen(QPen(col, 3.4, Qt.SolidLine, Qt.RoundCap))
-        p.drawArc(QRectF(m.left() + 3, m.top() + 1, m.width() - 6, m.height() * 0.8), 0, 180 * 16)
-        p.setPen(Qt.NoPen)
-        p.setBrush(QColor("#6E5BD6") if not dim else QColor(DIM).darker(150))
-        cy = m.center().y()
-        p.drawRoundedRect(QRectF(m.left() - 1, cy - 8, 9, 17), 3.5, 3.5)
-        p.drawRoundedRect(QRectF(m.right() - 8, cy - 8, 9, 17), 3.5, 3.5)
-        p.restore()
-
-    @staticmethod
-    def _paint_waves(p, c: QPointF, t: float) -> None:
-        p.save()
-        p.setBrush(Qt.NoBrush)
-        for i in range(3):
-            phase = (t * 1.6 - i * 0.28) % 1.0
-            alpha = int(255 * (1 - phase) * min(1.0, t * 3))
-            p.setPen(QPen(QColor(185, 167, 255, alpha), 2.2, Qt.SolidLine, Qt.RoundCap))
-            rad = 5 + phase * 16
-            p.drawArc(QRectF(c.x() - rad, c.y() - rad, rad * 2, rad * 2), -50 * 16, 100 * 16)
-        p.restore()
-
-    @staticmethod
-    def _paint_battery(p, body: QRectF, charging: bool, pct: int, t: float) -> None:
-        p.save()
-        p.setRenderHint(QPainter.Antialiasing)
-        p.setPen(QPen(TEXT, 2))
-        p.setBrush(Qt.NoBrush)
-        p.drawRoundedRect(body, 6, 6)
-        p.setPen(Qt.NoPen)
-        p.setBrush(TEXT)
-        p.drawRoundedRect(QRectF(body.right() + 2, body.center().y() - 4, 3.5, 8), 1.5, 1.5)
-        ease = 1 - (1 - min(t / 0.7, 1.0)) ** 3  # fill rises on arrival
-        frac = max(0.06, pct / 100) * ease
-        color = GREEN if charging or pct > 20 else RED
-        if charging:
-            color = QColor(color)
-            color.setAlphaF(0.75 + 0.25 * math.sin(t * 5))
-        inner = body.adjusted(3.5, 3.5, -3.5, -3.5)
-        p.setBrush(color)
-        p.drawRoundedRect(QRectF(inner.left(), inner.top(), inner.width() * frac, inner.height()), 3, 3)
-        if charging and t > 0.15:
-            c = body.center()
-            bolt = QPolygonF([
-                QPointF(c.x() + 2, c.y() - 9), QPointF(c.x() - 6, c.y() + 1.5), QPointF(c.x() - 0.5, c.y() + 1.5),
-                QPointF(c.x() - 2, c.y() + 9), QPointF(c.x() + 6, c.y() - 2), QPointF(c.x() + 0.5, c.y() - 2),
-            ])
-            p.setPen(QPen(BG, 1.4))
-            p.setBrush(QColor("#FFF3B0"))
-            p.drawPolygon(bolt)
-        p.restore()
 
     def _paint_approval(self, p, r: QRectF) -> None:
         ap = self.approvals[0]
@@ -635,7 +591,7 @@ class Island(QWidget):
             p.restore()
         else:
             p.fillPath(path, QColor(255, 255, 255, 25))
-            self._text(p, art, "♪", ACCENT, 26, align=Qt.AlignHCenter)
+            self._text(p, art, "♪", self.accent, 26, align=Qt.AlignHCenter)
         tx = 108.0
         self._text(p, QRectF(tx, 52, r.width() - tx - 18, 24), m.title, TEXT, 13, True)
         self._text(p, QRectF(tx, 76, r.width() - tx - 18, 20), m.artist, DIM, 10)
@@ -646,7 +602,7 @@ class Island(QWidget):
         p.setBrush(QColor(255, 255, 255, 40))
         p.drawRoundedRect(bar, 2.5, 2.5)
         if dur > 0:
-            p.setBrush(ACCENT)
+            p.setBrush(self.accent)
             p.drawRoundedRect(QRectF(bar.left(), bar.top(), bar.width() * min(pos / dur, 1), 5), 2.5, 2.5)
             self._hit_rect(bar.adjusted(0, -8, 0, 8), "bar", (bar, dur))
         self._text(p, QRectF(bar.right() + 8, 98, 56, 16), f"{fmt_time(pos)}", DIM, 8)
@@ -694,11 +650,11 @@ class Island(QWidget):
         items = self.shelf.items
         area = QRectF(14, 52, r.width() - 28, r.height() - 66)
         if self._dropping or not items:
-            p.setPen(QPen(ACCENT if self._dropping else QColor(255, 255, 255, 50), 1.5, Qt.DashLine))
+            p.setPen(QPen(self.accent if self._dropping else QColor(255, 255, 255, 50), 1.5, Qt.DashLine))
             p.setBrush(QColor(185, 167, 255, 25) if self._dropping else Qt.NoBrush)
             p.drawRoundedRect(area, 18, 18)
             msg = "Release to add" if self._dropping else "Drop files here"
-            self._text(p, area, msg, ACCENT if self._dropping else DIM, 12, align=Qt.AlignHCenter)
+            self._text(p, area, msg, self.accent if self._dropping else DIM, 12, align=Qt.AlignHCenter)
             if self._dropping or not items:
                 return
         cols, tw, th = 4, 114, 82
@@ -726,8 +682,13 @@ class Island(QWidget):
             return
         for n, s in enumerate(sessions[:5]):
             y = 54 + n * 34
+            running = s is self._claude or (self._claude and s.id == self._claude.id)
             p.setPen(Qt.NoPen)
-            p.setBrush(STATUS_COLOR.get(s.status, DIM))
+            p.setBrush(CLAUDE if running else STATUS_COLOR.get(s.status, DIM))
             p.drawEllipse(QPointF(30, y + 14), 5, 5)
-            self._text(p, QRectF(46, y, 120, 28), s.project, TEXT, 10, True)
-            self._text(p, QRectF(170, y, r.width() - 190, 28), s.activity, DIM, 10)
+            self._text(p, QRectF(46, y, 110, 28), s.project, TEXT, 10, True)
+            stats = ""
+            if running:
+                stats = fmt_minutes(s.elapsed) + (f" · {fmt_tokens(s.tokens)}" if s.tokens is not None else "")
+                self._text(p, QRectF(r.width() - 140, y, 124, 28), stats, CLAUDE, 10, True, Qt.AlignRight)
+            self._text(p, QRectF(160, y, r.width() - 160 - (150 if stats else 20), 28), s.activity, DIM, 10)
