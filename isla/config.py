@@ -22,6 +22,7 @@ class Config:
     hide_in_fullscreen: bool = True
     lyrics_enabled: bool = True
     ghost_opacity: float = 0.22
+    status_peeks: bool = True
 
     @classmethod
     def load(cls, path: Path | None = None) -> "Config":

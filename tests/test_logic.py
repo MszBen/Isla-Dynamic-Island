@@ -93,3 +93,16 @@ def test_config_ignores_unknown_and_roundtrips(tmp_path):
     assert c.ghost_opacity == 0.4
     c.save(f)
     assert "bogus" not in json.loads(f.read_text())
+
+
+def test_power_interpret():
+    from isla.power import interpret
+    assert interpret(1, 8, 80) == (True, 80)
+    assert interpret(0, 1, 42) == (False, 42)
+    assert interpret(1, 128, 255) is None  # desktop, no battery
+
+
+def test_is_headphones():
+    from isla.devices import is_headphones
+    assert is_headphones("Headphones (WH-1000XM5 Hands-Free)")
+    assert not is_headphones("Speakers (Realtek Audio)")

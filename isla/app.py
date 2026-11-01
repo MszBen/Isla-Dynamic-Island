@@ -11,7 +11,9 @@ from .agents import AgentHub
 from .config import Config, data_dir
 from .island import Island
 from .mascot import Mascot
+from .devices import AudioWatcher
 from .media import MediaService
+from .power import PowerMonitor
 from .settings import SettingsWindow
 from .shelf import Shelf
 
@@ -41,6 +43,22 @@ def run() -> int:
     if not hub.start():
         print(f"[isla] port {cfg.port} busy; agent hooks disabled", file=sys.stderr)
     media.start()
+
+    power = PowerMonitor()
+    power.changed.connect(
+        lambda plugged, pct: island.show_peek(
+            "charging" if plugged else "battery",
+            "Charging" if plugged else "On battery",
+            "Charger connected" if plugged else "Charger unplugged",
+            pct,
+        )
+    )
+    power.start()
+    audio = AudioWatcher()
+    audio.added.connect(
+        lambda name, hp: island.show_peek("headphones", "Headphones connected" if hp else "Audio device connected", name)
+    )
+    audio.removed.connect(lambda name, _hp: island.show_peek("headphones_off", "Headphones disconnected", name))
     island.show()
 
     tray = QSystemTrayIcon(_tray_icon(), app)
