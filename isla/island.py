@@ -26,7 +26,9 @@ from .config import Config
 from .lyrics import Line, current_index, fetch_lyrics
 from .mascot import BODY, Mascot
 from .media import MediaInfo, MediaService
+from .focus import LABEL, LONG, WORK, FocusTimer, format_clock
 from .shelf import Shelf
+from .sound import play_chime
 from .system import fullscreen_app_active, set_click_through
 
 BG = QColor("#0C0B12")
@@ -43,7 +45,7 @@ RED = QColor("#FF6B6B")
 FONT = "Segoe UI"
 
 SIZES = {"expanded": (500, 248), "approval": (470, 132), "toast": (330, 44), "peek": (350, 58)}
-TABS = ("Music", "Shelf", "Agents")
+TABS = ("Music", "Focus", "Shelf", "Agents")
 STATUS_COLOR = {"idle": DIM, "working": ACCENT, "waiting": AMBER, "done": GREEN}
 
 
@@ -70,6 +72,8 @@ class Island(QWidget):
         self.cfg, self.media_svc, self.hub, self.shelf = cfg, media, hub, shelf
         self.cache_dir = cache_dir
         self.mascot = Mascot()
+        self.focus = FocusTimer()
+        self.apply_focus_config()
 
         self.media = MediaInfo()
         self._media_stamp = time.monotonic()
@@ -145,6 +149,27 @@ class Island(QWidget):
             return "toast"
         return "compact"
 
+    def apply_focus_config(self) -> None:
+        c = self.cfg
+        self.focus.configure(c.focus_work_min * 60, c.focus_short_min * 60, c.focus_long_min * 60, c.focus_cycles)
+        self.update()
+
+    def _focus_tick(self) -> None:
+        for event in self.focus.tick(time.monotonic()):
+            if self.cfg.focus_chime:
+                play_chime(self.cache_dir.parent)
+            if event == "break":
+                self.show_peek("focus", "Time for a break", f"{self.cfg.focus_short_min} min · well done", seconds=4)
+            elif event == "long_break":
+                self.show_peek("focus", "Long break", f"{self.cfg.focus_long_min} min · session complete", seconds=4)
+            else:
+                self.show_peek("focus", "Break's over", "Ready when you are", seconds=4)
+
+    def _focus_text(self) -> str:
+        f = self.focus
+        text = f"{LABEL[f.phase]} · {format_clock(f.remaining)}"
+        return text if f.running else text + " · paused"
+
     def _compact_text(self) -> str:
         if self._claude:
             s = self._claude
@@ -152,6 +177,8 @@ class Island(QWidget):
             if s.tokens is not None:
                 parts.append(f"{fmt_tokens(s.tokens)} tokens")
             return " · ".join(parts)
+        if self.focus.active:
+            return self._focus_text()
         m = self.media
         if m.active and m.playing:
             i = current_index(self.lines, self._position())
@@ -217,6 +244,7 @@ class Island(QWidget):
                 self.hide()
             elif not self.isVisible():
                 self.show()
+        self._focus_tick()
         self.hub.refresh_tokens()
         self._refresh_claude()
         self._refresh_mood()
@@ -243,6 +271,8 @@ class Island(QWidget):
         if self.approvals or any(s.status == "waiting" for s in sessions):
             rest = "curious"
         elif any(s.status == "working" for s in sessions):
+            rest = "focused"
+        elif self.focus.running and self.focus.phase == WORK:
             rest = "focused"
         elif self.media.active and self.media.playing:
             rest = "music"
@@ -445,6 +475,15 @@ class Island(QWidget):
             t = max(0.0, min(1.0, frac)) * dur
             m.seek(t)
             self._media_stamp, self.media.position = time.monotonic(), t
+        elif kind == "focus_toggle":
+            self.focus.toggle(time.monotonic())
+            self._apply_mode()
+        elif kind == "focus_reset":
+            self.focus.reset()
+            self._apply_mode()
+        elif kind == "focus_skip":
+            self.focus.skip(time.monotonic())
+            self._apply_mode()
         elif kind == "remove":
             self.shelf.remove(arg)
         elif kind in ("deny", "once", "always"):
@@ -528,13 +567,17 @@ class Island(QWidget):
 
     def _paint_compact(self, p, r: QRectF) -> None:
         self._mascot_at(p, QRectF(10, (r.height() - 26) / 2, 26, 26))
-        playing = self.media.active and self.media.playing and not self._claude
+        playing = self.media.active and self.media.playing and not self._claude and not self.focus.active
         if self._claude:
             self._text(p, QRectF(46, 0, r.width() - 46 - 36, r.height()), self._compact_text(), CLAUDE_INK, 10, True)
             pulse = 3.2 + 1.2 * math.sin(time.monotonic() * 4)
             p.setPen(Qt.NoPen)
             p.setBrush(CLAUDE_INK)
             p.drawEllipse(QPointF(r.width() - 22, r.height() / 2), pulse, pulse)
+        elif self.focus.active:
+            self._text(p, QRectF(46, 0, r.width() - 46 - 40, r.height()), self._compact_text(), size=10)
+            self._ring(p, QRectF(r.width() - 32, r.height() / 2 - 9, 18, 18), self.focus.progress, 3.0,
+                       self.accent if self.focus.phase == WORK else GREEN)
         elif playing:
             self._text(p, QRectF(46, 0, r.width() - 46 - 40, r.height()), self._compact_text(), size=10)
         else:  # just the clock: centred in the whole pill
@@ -574,7 +617,7 @@ class Island(QWidget):
             if kind == "headphones":
                 self._paint_headphones(p, m)
                 self._paint_waves(p, QPointF(r.width() - 30, h / 2), t)
-            else:
+            elif kind == "headphones_off":
                 self._paint_headphones(p, m, dim=True)
             self._text(p, QRectF(62, 8, r.width() - 110, 22), title, TEXT, 11, True)
             self._text(p, QRectF(62, 29, r.width() - 110, 20), sub, DIM, 9)
@@ -682,7 +725,54 @@ class Island(QWidget):
             self._hit_rect(tab, "tab", name)
             x += 90
         self._text(p, QRectF(r.width() - 70, 12, 56, 26), time.strftime("%H:%M"), DIM, 10, align=Qt.AlignRight)
-        {"Music": self._paint_music, "Shelf": self._paint_shelf, "Agents": self._paint_agents}[self.tab](p, r)
+        {
+            "Music": self._paint_music, "Focus": self._paint_focus,
+            "Shelf": self._paint_shelf, "Agents": self._paint_agents,
+        }[self.tab](p, r)
+
+    @staticmethod
+    def _ring(p, rect: QRectF, progress: float, width: float, color: QColor) -> None:
+        p.save()
+        p.setRenderHint(QPainter.Antialiasing)
+        p.setBrush(Qt.NoBrush)
+        p.setPen(QPen(QColor(255, 255, 255, 36), width, Qt.SolidLine, Qt.RoundCap))
+        p.drawEllipse(rect)
+        if progress > 0:
+            p.setPen(QPen(color, width, Qt.SolidLine, Qt.RoundCap))
+            p.drawArc(rect, 90 * 16, -int(progress * 360 * 16))
+        p.restore()
+
+    def _paint_focus(self, p, r: QRectF) -> None:
+        f = self.focus
+        color = self.accent if f.phase == WORK else GREEN
+        ring = QRectF(30, 62, 140, 140)
+        self._ring(p, ring, f.progress, 9.0, color)
+        self._text(p, QRectF(ring.left(), ring.center().y() - 26, ring.width(), 40), format_clock(f.remaining), TEXT, 24, True, Qt.AlignHCenter)
+        self._text(p, QRectF(ring.left(), ring.center().y() + 12, ring.width(), 20), "paused" if f.active and not f.running else LABEL[f.phase].lower(), DIM, 10, align=Qt.AlignHCenter)
+
+        x = 204.0
+        self._text(p, QRectF(x, 62, r.width() - x - 16, 28), LABEL[f.phase], TEXT, 15, True)
+        filled, total = f.session_dots
+        sub = f"Session {min(filled + (1 if f.phase == WORK else 0), total)} of {total}" if f.phase != LONG else "Session complete"
+        self._text(p, QRectF(x, 90, r.width() - x - 16, 22), sub, DIM, 10)
+        p.setPen(Qt.NoPen)
+        for i in range(total):
+            p.setBrush(color if i < filled else QColor(255, 255, 255, 36))
+            p.drawEllipse(QPointF(x + 7 + i * 20, 130), 6, 6)
+
+        label = "Pause" if f.running else ("Resume" if f.active else "Start")
+        main = QRectF(x, 156, 124, 38)
+        p.setBrush(color)
+        p.drawRoundedRect(main, 19, 19)
+        self._text(p, main, label, CLAUDE_INK if self._claude else BG, 11, True, Qt.AlignHCenter)
+        self._hit_rect(main, "focus_toggle")
+        for n, (name, kind) in enumerate((("Reset", "focus_reset"), ("Skip", "focus_skip"))):
+            b = QRectF(x + 132 + n * 74, 159, 68, 32)
+            p.setPen(QPen(DIM, 1.2))
+            p.setBrush(Qt.NoBrush)
+            p.drawRoundedRect(b, 16, 16)
+            self._text(p, b, name, TEXT, 10, align=Qt.AlignHCenter)
+            self._hit_rect(b, kind)
 
     def _paint_music(self, p, r: QRectF) -> None:
         m = self.media

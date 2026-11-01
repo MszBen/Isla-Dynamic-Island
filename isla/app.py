@@ -63,7 +63,7 @@ def run() -> int:
 
     tray = QSystemTrayIcon(_tray_icon(), app)
     menu = QMenu()
-    settings = SettingsWindow(cfg, hub)
+    settings = SettingsWindow(cfg, hub, island.apply_focus_config)
 
     def open_settings() -> None:
         settings.show()

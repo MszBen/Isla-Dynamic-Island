@@ -23,6 +23,11 @@ class Config:
     lyrics_enabled: bool = True
     ghost_opacity: float = 0.22
     status_peeks: bool = True
+    focus_work_min: int = 25
+    focus_short_min: int = 5
+    focus_long_min: int = 15
+    focus_cycles: int = 4
+    focus_chime: bool = True
 
     @classmethod
     def load(cls, path: Path | None = None) -> "Config":

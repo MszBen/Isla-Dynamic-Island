@@ -116,9 +116,10 @@ class Card(QFrame):
 
 
 class SettingsWindow(QWidget):
-    def __init__(self, cfg: Config, hub: AgentHub):
+    def __init__(self, cfg: Config, hub: AgentHub, on_focus_change=None):
         super().__init__()
         self.cfg, self.hub = cfg, hub
+        self._on_focus_change = on_focus_change
         self.setObjectName("root")
         self.setWindowTitle("Isla Settings")
         self.setMinimumWidth(480)
@@ -179,6 +180,22 @@ class SettingsWindow(QWidget):
         root.addWidget(card)
         root.addSpacing(6)
 
+        # focus
+        root.addWidget(_label("FOCUS TIMER", "section"))
+        self.chime = Switch()
+        self.chime.setChecked(cfg.focus_chime)
+        self.chime.toggled.connect(lambda v: self._set("focus_chime", v))
+        self.f_work, self._f_work_val = self._slider(5, 90, cfg.focus_work_min, "{} min", "focus_work_min", 5)
+        self.f_short, self._f_short_val = self._slider(1, 30, cfg.focus_short_min, "{} min", "focus_short_min", 1)
+        self.f_long, self._f_long_val = self._slider(5, 60, cfg.focus_long_min, "{} min", "focus_long_min", 5)
+        card = Card()
+        card.row("Focus length", self._with_value(self.f_work, self._f_work_val), "Pomodoro work session")
+        card.row("Short break", self._with_value(self.f_short, self._f_short_val))
+        card.row("Long break", self._with_value(self.f_long, self._f_long_val), "After every 4 sessions")
+        card.row("Chime", self.chime, "Plays when a phase ends")
+        root.addWidget(card)
+        root.addSpacing(6)
+
         # agents
         root.addWidget(_label("CLAUDE CODE", "section"))
         self.hook_status = _label("", "status")
@@ -235,6 +252,8 @@ class SettingsWindow(QWidget):
     def _set(self, name: str, value) -> None:
         setattr(self.cfg, name, value)
         self.cfg.save()
+        if name.startswith("focus_") and self._on_focus_change:
+            self._on_focus_change()
 
     def _on_autostart(self, on: bool) -> None:
         try:
