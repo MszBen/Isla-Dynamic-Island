@@ -64,6 +64,10 @@ class Shelf:
             self._save()
         return added
 
+    def clear(self) -> None:
+        self.items = []
+        self._save()
+
     def remove(self, path: str) -> None:
         self.items = [i for i in self.items if i.path != path]
         self._save()

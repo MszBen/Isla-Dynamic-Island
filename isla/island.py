@@ -12,15 +12,16 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from PySide6.QtCore import (
-    QEasingCurve, QFileInfo, QMimeData, QPointF, QRectF, QSizeF, Qt, QTimer, QUrl,
+    QEasingCurve, QFileInfo, QLocale, QMimeData, QPointF, QRectF, QSizeF, Qt, QTime, QTimer, QUrl,
     QPropertyAnimation, QVariantAnimation, Signal,
 )
 from PySide6.QtGui import (
     QColor, QCursor, QDrag, QFont, QFontMetrics, QGuiApplication, QPainter, QLinearGradient, QPainterPath, QPen,
     QPixmap, QPolygonF,
 )
-from PySide6.QtWidgets import QFileIconProvider, QWidget
+from PySide6.QtWidgets import QFileIconProvider, QMenu, QToolTip, QWidget
 
+from . import hooks_install
 from .agents import AgentHub, Approval
 from .config import Config
 from .confetti import Confetti
@@ -46,6 +47,28 @@ RED = QColor("#FF6B6B")
 FONT = "Segoe UI"
 
 SIZES = {"expanded": (500, 248), "approval": (470, 132), "toast": (330, 44), "peek": (350, 58)}
+# Hover hints for the painted buttons (keyed by hit kind). Kinds not listed are self-explanatory.
+TIPS = {
+    "mascot": "Hi! Poke me",
+    "toggle": "Play / pause",
+    "next": "Next track",
+    "prev": "Previous track",
+    "bar": "Click to jump to a point in the song",
+    "seek": "Jump to this line",
+    "focus_reset": "Stop and reset the timer",
+    "focus_skip": "Skip to the next phase",
+    "focus_break": "Pause focus for a short break; it resumes by itself afterwards",
+    "focus_minus": "Shorter (the mouse wheel works too)",
+    "focus_plus": "Longer (the mouse wheel works too)",
+    "tile": "Click to open, drag out to move or copy it somewhere",
+    "remove": "Remove from the shelf (the file itself is not deleted)",
+    "clear": "Remove everything from the shelf (files are not deleted)",
+    "deny": "Block this action",
+    "once": "Allow just this one action",
+    "always": "Allow it, and don't ask again for this",
+    "connect": "Adds Isla's hooks to Claude Code's settings (a backup is made first)",
+}
+
 TABS = ("Music", "Focus", "Shelf", "Agents")
 STATUS_COLOR = {"idle": DIM, "working": ACCENT, "waiting": AMBER, "done": GREEN}
 
@@ -60,6 +83,11 @@ def fmt_tokens(n: int) -> str:
     return f"{n / 1000:.1f}k" if n < 1_000_000 else f"{n / 1_000_000:.2f}M"
 
 
+def clock_text() -> str:
+    """Time in the user's own Windows format (24h or 12h)."""
+    return QLocale.system().toString(QTime.currentTime(), QLocale.ShortFormat)
+
+
 def fmt_time(s: float) -> str:
     s = max(0, int(s))
     return f"{s // 60}:{s % 60:02d}"
@@ -67,6 +95,9 @@ def fmt_time(s: float) -> str:
 
 class Island(QWidget):
     lyrics_ready = Signal(object, object)  # (artist, title), list[Line]
+    open_settings = Signal()
+    open_tour = Signal()
+    quit_requested = Signal()
 
     def __init__(self, cfg: Config, media: MediaService, hub: AgentHub, shelf: Shelf, cache_dir: Path):
         super().__init__()
@@ -94,6 +125,9 @@ class Island(QWidget):
         self._dropping = False
         self._dragging_out = False
         self._ghost = False
+        self._tip = ""
+        self._hooks_ok: bool | None = None
+        self._hooks_checked = 0.0
         self._press_arg = None
         self._press: tuple[QPointF, str] | None = None
         self._last_active = time.monotonic()
@@ -107,6 +141,7 @@ class Island(QWidget):
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setAttribute(Qt.WA_ShowWithoutActivating)
         self.setAcceptDrops(True)
+        self.setMouseTracking(True)  # hover hints + pointer cursor over buttons
 
         self._anim = QVariantAnimation(self)
         self._anim.setDuration(340)
@@ -205,7 +240,7 @@ class Island(QWidget):
             if i >= 0 and self.lines[i].text:
                 return self.lines[i].text
             return f"{m.title} — {m.artist}" if m.artist else m.title
-        return time.strftime("%H:%M")
+        return clock_text()
 
     def _target_size(self) -> tuple[float, float]:
         mode = self.mode
@@ -465,6 +500,16 @@ class Island(QWidget):
         else:
             self.mousePressEvent(e)  # keep buttons responsive to rapid clicks
 
+    def contextMenuEvent(self, e) -> None:
+        menu = QMenu(self)
+        menu.addAction("Settings…", self.open_settings.emit)
+        menu.addAction("Quick tour", self.open_tour.emit)
+        menu.addSeparator()
+        menu.addAction("See through until I move away  (or double-click)", self._enter_ghost)
+        menu.addSeparator()
+        menu.addAction("Quit Isla", self.quit_requested.emit)
+        menu.exec(e.globalPos())
+
     # ------------------------------------------------------------------ mouse
     def _hit(self, pos: QPointF):
         for rect, kind, arg in reversed(self._hits):
@@ -518,11 +563,26 @@ class Island(QWidget):
             self._apply_mode()
         elif kind == "remove":
             self.shelf.remove(arg)
+        elif kind == "clear":
+            self.shelf.clear()
+        elif kind == "connect":
+            self._connect_claude()
         elif kind in ("deny", "once", "always"):
             self.hub.resolve(arg, kind)
         self.update()
 
     def mouseMoveEvent(self, e) -> None:
+        if not e.buttons():  # plain hover: pointer cursor + explanatory tooltip
+            kind, _ = self._hit(e.position())
+            self.setCursor(Qt.PointingHandCursor if kind else Qt.ArrowCursor)
+            tip = TIPS.get(kind or "", "")
+            if tip != self._tip:
+                self._tip = tip
+                if tip:
+                    QToolTip.showText(e.globalPosition().toPoint(), tip, self)
+                else:
+                    QToolTip.hideText()
+            return
         if not (self._press and self._press[1] == "tile" and e.buttons() & Qt.LeftButton):
             return
         if (e.position() - self._press[0]).manhattanLength() < 8:
@@ -554,6 +614,19 @@ class Island(QWidget):
         if path not in self._icons:
             self._icons[path] = self._icon_provider.icon(QFileInfo(path)).pixmap(32, 32)
         return self._icons[path]
+
+    def _hooks_installed(self) -> bool:
+        now = time.monotonic()
+        if self._hooks_ok is None or now - self._hooks_checked > 3:
+            self._hooks_ok, self._hooks_checked = hooks_install.is_installed(), now
+        return self._hooks_ok
+
+    def _connect_claude(self) -> None:
+        try:
+            hooks_install.install()
+        except (OSError, ValueError):
+            return
+        self._hooks_ok, self._hooks_checked = True, time.monotonic()
 
     def _hit_rect(self, rect: QRectF, kind: str, arg=None) -> None:
         self._hits.append((rect, kind, arg))
@@ -756,7 +829,7 @@ class Island(QWidget):
             self._text(p, tab, name, TEXT if name == self.tab else DIM, 10, name == self.tab, Qt.AlignHCenter)
             self._hit_rect(tab, "tab", name)
             x += 90
-        self._text(p, QRectF(r.width() - 70, 12, 56, 26), time.strftime("%H:%M"), DIM, 10, align=Qt.AlignRight)
+        self._text(p, QRectF(r.width() - 104, 12, 90, 26), clock_text(), DIM, 10, align=Qt.AlignRight)
         {
             "Music": self._paint_music, "Focus": self._paint_focus,
             "Shelf": self._paint_shelf, "Agents": self._paint_agents,
@@ -833,7 +906,9 @@ class Island(QWidget):
     def _paint_music(self, p, r: QRectF) -> None:
         m = self.media
         if not m.active:
-            self._text(p, QRectF(0, 50, r.width(), r.height() - 60), "Nothing playing", DIM, 11, align=Qt.AlignHCenter)
+            self._text(p, QRectF(0, 72, r.width(), 44), "♪", self.accent, 26, align=Qt.AlignHCenter)
+            self._text(p, QRectF(0, 120, r.width(), 24), "Nothing playing", TEXT, 12, True, Qt.AlignHCenter)
+            self._text(p, QRectF(30, 146, r.width() - 60, 22), "Play something in Spotify, YouTube or any music app and it shows up here", DIM, 9, align=Qt.AlignHCenter)
             return
         art = QRectF(18, 54, 76, 76)
         path = QPainterPath()
@@ -908,11 +983,14 @@ class Island(QWidget):
             p.setBrush(QColor(185, 167, 255, 25) if self._dropping else Qt.NoBrush)
             p.drawRoundedRect(area, 18, 18)
             msg = "Release to add" if self._dropping else "Drop files here"
-            self._text(p, area, msg, self.accent if self._dropping else DIM, 12, align=Qt.AlignHCenter)
+            mid = area.center().y()
+            self._text(p, QRectF(area.left(), mid - 24, area.width(), 24), msg, self.accent if self._dropping else TEXT, 12, True, Qt.AlignHCenter)
+            if not self._dropping:
+                self._text(p, QRectF(area.left(), mid, area.width(), 20), "Keep them handy, then drag them out into any app", DIM, 9, align=Qt.AlignHCenter)
             if self._dropping or not items:
                 return
         cols, tw, th = 4, 114, 82
-        for n, item in enumerate(items[:8]):
+        for n, item in enumerate(items[::-1][:8]):  # newest first
             col, row = n % cols, n // cols
             tile = QRectF(area.left() + col * (tw + 5), area.top() + row * (th + 6), tw, th)
             p.setPen(Qt.NoPen)
@@ -925,14 +1003,25 @@ class Island(QWidget):
             self._text(p, x, "×", DIM, 11, align=Qt.AlignHCenter)
             self._hit_rect(tile, "tile", item.path)
             self._hit_rect(x, "remove", item.path)
+        self._text(p, QRectF(18, r.height() - 24, 260, 18), "Click to open · drag out to move or copy", DIM, 8)
+        clear = QRectF(r.width() - 92, r.height() - 26, 76, 20)
+        self._text(p, clear, "Clear all", DIM, 8, align=Qt.AlignRight)
+        self._hit_rect(clear, "clear")
         if len(items) > 8:
-            self._text(p, QRectF(r.width() - 90, r.height() - 22, 76, 16), f"+{len(items) - 8} more", DIM, 8, align=Qt.AlignRight)
+            self._text(p, QRectF(r.width() - 230, r.height() - 24, 130, 18), f"+{len(items) - 8} older", DIM, 8, align=Qt.AlignRight)
 
     def _paint_agents(self, p, r: QRectF) -> None:
         sessions = self.hub.snapshot()
         if not sessions:
-            self._text(p, QRectF(20, 56, r.width() - 40, 30), "No agents connected", TEXT, 11, True, Qt.AlignHCenter)
-            self._text(p, QRectF(20, 86, r.width() - 40, 40), "Run  python -m isla install-hooks  then start Claude Code", DIM, 9, align=Qt.AlignHCenter)
+            mid = r.width() / 2
+            if self._hooks_installed():
+                self._text(p, QRectF(20, 92, r.width() - 40, 28), "Waiting for Claude Code…", TEXT, 12, True, Qt.AlignHCenter)
+                self._text(p, QRectF(30, 120, r.width() - 60, 20), "Start a Claude Code session and it will appear here.", DIM, 9, align=Qt.AlignHCenter)
+                self._text(p, QRectF(30, 140, r.width() - 60, 20), "Sessions that were already open need a restart first.", DIM, 9, align=Qt.AlignHCenter)
+            else:
+                self._text(p, QRectF(20, 70, r.width() - 40, 28), "Connect Claude Code", TEXT, 12, True, Qt.AlignHCenter)
+                self._text(p, QRectF(30, 98, r.width() - 60, 40), "See what it's doing, how long it's been going and approve its actions right here.", DIM, 9, align=Qt.AlignHCenter)
+                self._pill_button(p, QRectF(mid - 80, 150, 160, 36), "Connect", "connect", self.accent)
             return
         for n, s in enumerate(sessions[:5]):
             y = 54 + n * 34
