@@ -12,12 +12,26 @@ class FocusTimer:
         self.remaining = work
         self.running = False
         self.done = 0  # work sessions completed since reset
+        self.interrupted: float | None = None  # focus seconds left while on a quick break
         self._last: float | None = None
 
     # -- derived -------------------------------------------------------
     @property
     def total(self) -> float:
         return {WORK: self.work, SHORT: self.short, LONG: self.long}[self.phase]
+
+    @property
+    def label(self) -> str:
+        return "Quick break" if self.interrupted is not None else LABEL[self.phase]
+
+    @property
+    def step(self) -> float:
+        """Seconds the +/- buttons change the current phase by."""
+        return 60.0 if self.phase == SHORT else 300.0
+
+    @property
+    def can_break(self) -> bool:
+        return self.phase == WORK and self.active and self.interrupted is None
 
     @property
     def progress(self) -> float:
@@ -51,13 +65,45 @@ class FocusTimer:
     def toggle(self, now: float) -> None:
         self.pause(now) if self.running else self.start(now)
 
+    def adjust(self, delta: float) -> bool:
+        """Lengthen/shorten the current phase (also the time left). False if out of range."""
+        attr = {WORK: "work", SHORT: "short", LONG: "long"}[self.phase]
+        lo, hi = {WORK: (300, 7200), SHORT: (60, 1800), LONG: (300, 3600)}[self.phase]
+        cur = getattr(self, attr)
+        new = min(hi, max(lo, cur + delta))
+        change = new - cur
+        if change == 0 or (self.active and self.remaining + change < 30):
+            return False
+        setattr(self, attr, new)
+        self.remaining = self.total if not self.active else self.remaining + change
+        return True
+
+    def start_break(self, now: float) -> bool:
+        """Pause focus for a quick break; focus resumes by itself when the break ends."""
+        if not self.can_break:
+            return False
+        self.tick(now)
+        self.interrupted = self.remaining
+        self.phase, self.remaining = SHORT, self.short
+        self.running, self._last = True, now
+        return True
+
+    def _resume_focus(self, now: float | None = None) -> None:
+        self.phase, self.remaining, self.interrupted = WORK, self.interrupted or self.work, None
+        self.running = True
+        self._last = now
+
     def reset(self) -> None:
         self.phase, self.running, self.done, self._last = WORK, False, 0, None
+        self.interrupted = None
         self.remaining = self.work
 
     def skip(self, now: float) -> str:
         """Jump to the next phase (a skipped work session doesn't count as completed)."""
         self.tick(now)
+        if self.interrupted is not None:
+            self._resume_focus(now)
+            return WORK
         was_running = self.running
         if self.phase == WORK:
             self.phase = SHORT
@@ -69,7 +115,7 @@ class FocusTimer:
         return self.phase
 
     def tick(self, now: float) -> list[str]:
-        """Advance the clock. Returns phase-change events: 'break', 'long_break', 'work_ready'."""
+        """Advance the clock. Returns phase-change events: 'break', 'long_break', 'work_ready', 'work_resume'."""
         events: list[str] = []
         if not self.running:
             self._last = now
@@ -85,6 +131,9 @@ class FocusTimer:
                 self.phase = LONG if long_break else SHORT
                 self.remaining = max(0.0, self.total - carry)
                 events.append("long_break" if long_break else "break")
+            elif self.interrupted is not None:  # quick break over: pick focus back up
+                self._resume_focus(self._last)
+                events.append("work_resume")
             else:  # break over: wait for the user to start the next focus session
                 self.phase, self.running = WORK, False
                 self.remaining = self.total

@@ -26,7 +26,7 @@ from .config import Config
 from .lyrics import Line, current_index, fetch_lyrics
 from .mascot import BODY, Mascot
 from .media import MediaInfo, MediaService
-from .focus import LABEL, LONG, WORK, FocusTimer, format_clock
+from .focus import LABEL, LONG, SHORT, WORK, FocusTimer, format_clock
 from .shelf import Shelf
 from .sound import play_chime
 from .system import fullscreen_app_active, set_click_through
@@ -162,12 +162,28 @@ class Island(QWidget):
                 self.show_peek("focus", "Time for a break", f"{self.cfg.focus_short_min} min · well done", seconds=4)
             elif event == "long_break":
                 self.show_peek("focus", "Long break", f"{self.cfg.focus_long_min} min · session complete", seconds=4)
+            elif event == "work_resume":
+                self.show_peek("focus", "Back to focus", f"{format_clock(self.focus.remaining)} left", seconds=3)
             else:
                 self.show_peek("focus", "Break's over", "Ready when you are", seconds=4)
 
+    def _focus_adjust(self, delta: float) -> None:
+        """Change the current phase's length from the island and remember it in the settings."""
+        f = self.focus
+        if not f.adjust(delta):
+            return
+        field = {WORK: "focus_work_min", SHORT: "focus_short_min", LONG: "focus_long_min"}[f.phase]
+        setattr(self.cfg, field, round({WORK: f.work, SHORT: f.short, LONG: f.long}[f.phase] / 60))
+        self.cfg.save()
+        self.update()
+
+    def wheelEvent(self, e) -> None:
+        if self.mode == "expanded" and self.tab == "Focus":
+            self._focus_adjust(60.0 if e.angleDelta().y() > 0 else -60.0)
+
     def _focus_text(self) -> str:
         f = self.focus
-        text = f"{LABEL[f.phase]} · {format_clock(f.remaining)}"
+        text = f"{f.label} · {format_clock(f.remaining)}"
         return text if f.running else text + " · paused"
 
     def _compact_text(self) -> str:
@@ -481,6 +497,11 @@ class Island(QWidget):
         elif kind == "focus_reset":
             self.focus.reset()
             self._apply_mode()
+        elif kind == "focus_break":
+            self.focus.start_break(time.monotonic())
+            self._apply_mode()
+        elif kind in ("focus_minus", "focus_plus"):
+            self._focus_adjust(self.focus.step * (1 if kind == "focus_plus" else -1))
         elif kind == "focus_skip":
             self.focus.skip(time.monotonic())
             self._apply_mode()
@@ -742,37 +763,61 @@ class Island(QWidget):
             p.drawArc(rect, 90 * 16, -int(progress * 360 * 16))
         p.restore()
 
+    def _pill_button(self, p, rect: QRectF, text: str, kind: str, filled: QColor | None = None, enabled: bool = True) -> None:
+        r = rect.height() / 2
+        if filled is not None:
+            p.setPen(Qt.NoPen)
+            p.setBrush(filled)
+            p.drawRoundedRect(rect, r, r)
+            self._text(p, rect, text, CLAUDE_INK if self._claude else BG, 11, True, Qt.AlignHCenter)
+        else:
+            p.setPen(QPen(DIM if enabled else QColor(255, 255, 255, 30), 1.2))
+            p.setBrush(Qt.NoBrush)
+            p.drawRoundedRect(rect, r, r)
+            self._text(p, rect, text, TEXT if enabled else DIM, 10, align=Qt.AlignHCenter)
+        if enabled:
+            self._hit_rect(rect, kind)
+
     def _paint_focus(self, p, r: QRectF) -> None:
         f = self.focus
         color = self.accent if f.phase == WORK else GREEN
-        ring = QRectF(30, 62, 140, 140)
+        ring = QRectF(30, 60, 140, 140)
         self._ring(p, ring, f.progress, 9.0, color)
-        self._text(p, QRectF(ring.left(), ring.center().y() - 26, ring.width(), 40), format_clock(f.remaining), TEXT, 24, True, Qt.AlignHCenter)
-        self._text(p, QRectF(ring.left(), ring.center().y() + 12, ring.width(), 20), "paused" if f.active and not f.running else LABEL[f.phase].lower(), DIM, 10, align=Qt.AlignHCenter)
+        cy = ring.center().y()
+        self._text(p, QRectF(ring.left(), cy - 30, ring.width(), 40), format_clock(f.remaining), TEXT, 24, True, Qt.AlignHCenter)
+        sub = "paused" if f.active and not f.running else f.label.lower()
+        self._text(p, QRectF(ring.left(), cy + 8, ring.width(), 20), sub, DIM, 10, align=Qt.AlignHCenter)
+        # length: -/+ (scroll wheel over the island works too)
+        for dx, sign, kind in ((-26, "−", "focus_minus"), (26, "+", "focus_plus")):
+            b = QRectF(ring.center().x() + dx - 12, cy + 32, 24, 24)
+            p.setPen(Qt.NoPen)
+            p.setBrush(QColor(255, 255, 255, 28))
+            p.drawEllipse(b)
+            self._text(p, b, sign, TEXT, 12, True, Qt.AlignHCenter)
+            self._hit_rect(b, kind)
 
         x = 204.0
-        self._text(p, QRectF(x, 62, r.width() - x - 16, 28), LABEL[f.phase], TEXT, 15, True)
+        self._text(p, QRectF(x, 58, r.width() - x - 16, 28), f.label, TEXT, 15, True)
         filled, total = f.session_dots
-        sub = f"Session {min(filled + (1 if f.phase == WORK else 0), total)} of {total}" if f.phase != LONG else "Session complete"
-        self._text(p, QRectF(x, 90, r.width() - x - 16, 22), sub, DIM, 10)
+        if f.interrupted is not None:
+            line = "Focus resumes after"
+        elif f.phase == LONG:
+            line = "Session complete"
+        else:
+            line = f"Session {min(filled + (1 if f.phase == WORK else 0), total)} of {total}"
+        self._text(p, QRectF(x, 85, r.width() - x - 16, 22), line, DIM, 10)
         p.setPen(Qt.NoPen)
         for i in range(total):
             p.setBrush(color if i < filled else QColor(255, 255, 255, 36))
-            p.drawEllipse(QPointF(x + 7 + i * 20, 130), 6, 6)
+            p.drawEllipse(QPointF(x + 7 + i * 20, 123), 6, 6)
 
         label = "Pause" if f.running else ("Resume" if f.active else "Start")
-        main = QRectF(x, 156, 124, 38)
-        p.setBrush(color)
-        p.drawRoundedRect(main, 19, 19)
-        self._text(p, main, label, CLAUDE_INK if self._claude else BG, 11, True, Qt.AlignHCenter)
-        self._hit_rect(main, "focus_toggle")
-        for n, (name, kind) in enumerate((("Reset", "focus_reset"), ("Skip", "focus_skip"))):
-            b = QRectF(x + 132 + n * 74, 159, 68, 32)
-            p.setPen(QPen(DIM, 1.2))
-            p.setBrush(Qt.NoBrush)
-            p.drawRoundedRect(b, 16, 16)
-            self._text(p, b, name, TEXT, 10, align=Qt.AlignHCenter)
-            self._hit_rect(b, kind)
+        self._pill_button(p, QRectF(x, 146, 124, 36), label, "focus_toggle", color)
+        if f.interrupted is None:
+            self._pill_button(p, QRectF(x + 132, 148, 88, 32), "Break", "focus_break", enabled=f.can_break)
+        row2 = 192
+        self._pill_button(p, QRectF(x, row2, 78, 30), "Reset", "focus_reset")
+        self._pill_button(p, QRectF(x + 86, row2, 116, 30), "Resume focus" if f.interrupted is not None else "Skip", "focus_skip")
 
     def _paint_music(self, p, r: QRectF) -> None:
         m = self.media

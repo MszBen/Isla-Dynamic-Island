@@ -283,4 +283,13 @@ class SettingsWindow(QWidget):
         self.autostart.blockSignals(True)
         self.autostart.setChecked(autostart_enabled())
         self.autostart.blockSignals(False)
+        for slider, label, value in (  # lengths can also change from the island
+            (self.f_work, self._f_work_val, self.cfg.focus_work_min),
+            (self.f_short, self._f_short_val, self.cfg.focus_short_min),
+            (self.f_long, self._f_long_val, self.cfg.focus_long_min),
+        ):
+            slider.blockSignals(True)
+            slider.setValue(value)
+            slider.blockSignals(False)
+            label.setText(f"{value} min")
         super().showEvent(e)
