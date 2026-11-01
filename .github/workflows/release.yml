@@ -51,6 +51,24 @@ jobs:
           name: Isla-exe
           path: dist/Isla.exe
 
+      - name: Pick release notes
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        run: |
+          # docs/release-notes/<tag>.md is the hand-written description; fall back to a generic one
+          $f = "docs/release-notes/${{ github.ref_name }}.md"
+          if (-not (Test-Path $f)) {
+            New-Item -ItemType Directory -Force docs/release-notes | Out-Null
+            $lines = @(
+              "## Install",
+              "Download **Isla.exe** below and double-click it. No installation and no Python needed.",
+              "",
+              "Windows may show *Windows protected your PC* because the app isn't code-signed yet. Click **More info, then Run anyway**."
+            )
+            $lines | Out-File -Encoding utf8 $f
+          }
+          "NOTES=$f" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+
       - name: Publish release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
@@ -58,12 +76,5 @@ jobs:
           files: |
             dist/Isla.exe
             dist/Isla.exe.sha256
-          generate_release_notes: true
-          body: |
-            ## Install
-            1. Download **Isla.exe** below.
-            2. Double-click it. No installation and no Python needed.
-
-            Windows may show *"Windows protected your PC"* because the app isn't code-signed yet. Click **More info → Run anyway**.
-
-            Isla is free for personal and noncommercial use (PolyForm Noncommercial 1.0.0). SHA-256 of `Isla.exe` is in `Isla.exe.sha256`.
+          body_path: ${{ env.NOTES }}
+          generate_release_notes: false
