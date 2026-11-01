@@ -23,6 +23,7 @@ from PySide6.QtWidgets import QFileIconProvider, QWidget
 
 from .agents import AgentHub, Approval
 from .config import Config
+from .confetti import Confetti
 from .lyrics import Line, current_index, fetch_lyrics
 from .mascot import BODY, Mascot
 from .media import MediaInfo, MediaService
@@ -72,6 +73,7 @@ class Island(QWidget):
         self.cfg, self.media_svc, self.hub, self.shelf = cfg, media, hub, shelf
         self.cache_dir = cache_dir
         self.mascot = Mascot()
+        self.confetti = Confetti()
         self.focus = FocusTimer()
         self.apply_focus_config()
 
@@ -158,6 +160,8 @@ class Island(QWidget):
         for event in self.focus.tick(time.monotonic()):
             if self.cfg.focus_chime:
                 play_chime(self.cache_dir.parent)
+            if event in ("break", "long_break"):  # a focus period just finished
+                self.celebrate("focus")
             if event == "break":
                 self.show_peek("focus", "Time for a break", f"{self.cfg.focus_short_min} min · well done", seconds=4)
             elif event == "long_break":
@@ -354,6 +358,8 @@ class Island(QWidget):
 
     def _on_attention(self, kind: str, text: str) -> None:
         self.mascot.flash("happy" if kind == "done" else "curious", 4)
+        if kind == "done":
+            self.celebrate("claude")
         self._toast = (kind, text)
         QTimer.singleShot(4000, self._clear_toast)
         self._apply_mode()
@@ -369,6 +375,11 @@ class Island(QWidget):
         QTimer.singleShot(int(seconds * 1000), lambda: self._clear_peek(peek))
         self._apply_mode()
         self._kick()
+
+    def celebrate(self, style: str) -> None:
+        """Confetti burst from the island (skipped when hidden for a fullscreen app)."""
+        if self.cfg.confetti and self.isVisible():
+            self.confetti.burst(style)
 
     def _clear_peek(self, peek) -> None:
         if self._peek is peek:

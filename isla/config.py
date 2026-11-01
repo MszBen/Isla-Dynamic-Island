@@ -23,6 +23,7 @@ class Config:
     lyrics_enabled: bool = True
     ghost_opacity: float = 0.22
     status_peeks: bool = True
+    confetti: bool = True
     focus_work_min: int = 25
     focus_short_min: int = 5
     focus_long_min: int = 15

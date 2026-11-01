@@ -199,3 +199,18 @@ def test_request_dismissed_when_relay_hangs_up():
     t0 = time.monotonic()
     assert hub.handle({"session_id": "s", "hook_event_name": "PermissionRequest", "tool_name": "Read"}, server_side) == ""
     assert time.monotonic() - t0 < 2
+
+
+def test_confetti_spawn_and_physics():
+    import random
+    from isla.confetti import LIFE, PALETTES, spawn
+
+    ps = spawn(50, (100, 30), PALETTES["claude"], random.Random(1))
+    assert len(ps) == 50 and all(p.alive for p in ps)
+    vy0 = [p.vy for p in ps]
+    for p in ps:
+        p.advance(0.1)
+    assert sum(p.vy > v for p, v in zip(ps, vy0)) > 40          # gravity pulls pieces down
+    for p in ps:
+        p.advance(LIFE)
+    assert not any(p.alive for p in ps) and all(p.opacity == 0 for p in ps)
