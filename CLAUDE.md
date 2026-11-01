@@ -62,6 +62,10 @@ tests/              pytest, no Qt display or network required
 - **Settings**: plain words, a hint under every option, changes apply and save immediately, window scrolls on small screens.
 - **Failures are visible**: windowless runs log to `%APPDATA%\Isla\isla.log`; problems the user can act on show from the tray.
 
+## Licence
+
+PolyForm Noncommercial 1.0.0 (`LICENSE`). Keep the `Required Notice:` line at the top intact, and add new bundled dependencies to `THIRD_PARTY.md`.
+
 ## Rules for working here
 
 - Keep logic that can be pure (LRC parsing, hook merge, session reducer, shelf store) free of Qt so it is testable.

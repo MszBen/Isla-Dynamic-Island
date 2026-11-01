@@ -66,4 +66,4 @@ jobs:
 
             Windows may show *"Windows protected your PC"* because the app isn't code-signed yet. Click **More info → Run anyway**.
 
-            SHA-256 of `Isla.exe` is in `Isla.exe.sha256`.
+            Isla is free for personal and noncommercial use (PolyForm Noncommercial 1.0.0). SHA-256 of `Isla.exe` is in `Isla.exe.sha256`.

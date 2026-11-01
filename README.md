@@ -10,7 +10,7 @@
 &nbsp;
 ![Python](https://img.shields.io/badge/Python-3.12-B9A7FF?style=for-the-badge&labelColor=14102A&logo=python&logoColor=white)
 &nbsp;
-[![MIT](https://img.shields.io/badge/license-MIT-B9A7FF?style=for-the-badge&labelColor=14102A)](LICENSE)
+[![License](https://img.shields.io/badge/license-PolyForm%20Noncommercial-B9A7FF?style=for-the-badge&labelColor=14102A)](LICENSE)
 
 <br>
 
@@ -194,8 +194,19 @@ Maintainers: see [`docs/RELEASING.md`](docs/RELEASING.md) for how releases are m
 
 ---
 
+## 📄 License
+
+Isla is **free for personal and noncommercial use**, under the [PolyForm Noncommercial License 1.0.0](LICENSE). In plain words:
+
+- ✅ Use it, read the code, change it, and share it with friends: personal use, hobby projects, study, charities, schools and other noncommercial organisations.
+- ❌ Don't **sell** it, charge for it, or build it into something commercial.
+- This is a *source-available* licence rather than an OSI "open source" one. Bundled libraries keep their own licences, listed in [THIRD_PARTY.md](THIRD_PARTY.md).
+- Want to use Isla commercially? Open an [issue](https://github.com/MszBen/Isla-Dynamic-Island/issues) and ask.
+
+(The summary above is for convenience. The `LICENSE` file is what counts.)
+
 ## 💜 Credits
 
 Isla combines ideas from three projects: the media controls, synced lyrics and **file shelf** of [Nusa](https://rama2555.github.io/nusa/), the **mascot** of [TwoCode](https://twocode.nl/), and the **AI-agent management** of [Coucou](https://github.com/Louis-CFM/coucou). Lyrics come from [LRCLIB](https://lrclib.net). Built with [PySide6](https://doc.qt.io/qtforpython-6/).
 
-<div align="center"><sub>MIT licensed · made with 💜 and a little help from Claude</sub></div>
+<div align="center"><sub>Free for noncommercial use · made with 💜 and a little help from Claude</sub></div>
