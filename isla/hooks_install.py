@@ -71,3 +71,11 @@ def uninstall(path: Path = SETTINGS) -> str:
     shutil.copy2(path, path.with_suffix(".json.isla-backup"))
     path.write_text(json.dumps(remove(_load(path)), indent=2), encoding="utf-8")
     return f"Isla hooks removed from {path}"
+
+
+def is_installed(path: Path = SETTINGS) -> bool:
+    try:
+        hooks = _load(path).get("hooks", {})
+    except (OSError, ValueError):
+        return False
+    return any(_is_ours(e) for entries in hooks.values() for e in entries)

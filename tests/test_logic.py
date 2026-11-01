@@ -74,3 +74,22 @@ def test_permission_timeout_falls_back():
 
     hub = AgentHub(0, approval_timeout=0.1)
     assert hub.handle({"session_id": "s", "hook_event_name": "PermissionRequest", "tool_name": "Bash"}) == ""
+
+
+def test_hooks_is_installed(tmp_path):
+    f = tmp_path / "settings.json"
+    assert hooks_install.is_installed(f) is False
+    f.write_text("not json")
+    assert hooks_install.is_installed(f) is False
+    f.write_text(json.dumps(hooks_install.merge({}, "python isla_hook.py")))
+    assert hooks_install.is_installed(f) is True
+
+
+def test_config_ignores_unknown_and_roundtrips(tmp_path):
+    from isla.config import Config
+    f = tmp_path / "c.json"
+    f.write_text(json.dumps({"ghost_opacity": 0.4, "bogus": 1}))
+    c = Config.load(f)
+    assert c.ghost_opacity == 0.4
+    c.save(f)
+    assert "bogus" not in json.loads(f.read_text())

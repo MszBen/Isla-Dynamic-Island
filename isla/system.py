@@ -27,3 +27,44 @@ def set_click_through(hwnd: int, on: bool) -> None:
     style = user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
     style = (style | WS_EX_TRANSPARENT | WS_EX_LAYERED) if on else (style & ~WS_EX_TRANSPARENT)
     user32.SetWindowLongW(hwnd, GWL_EXSTYLE, style)
+
+
+_RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
+_RUN_NAME = "Isla"
+
+
+def _autostart_command() -> str:
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parent.parent.as_posix()
+    exe = Path(sys.executable.replace("python.exe", "pythonw.exe")).as_posix()
+    code = f"import sys; sys.path.insert(0, r'{root}'); from isla.__main__ import main; main()"
+    return f'"{exe}" -c "{code}"'
+
+
+def autostart_enabled() -> bool:
+    if sys.platform != "win32":
+        return False
+    import winreg
+
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, _RUN_KEY) as k:
+            winreg.QueryValueEx(k, _RUN_NAME)
+        return True
+    except OSError:
+        return False
+
+
+def set_autostart(on: bool) -> None:
+    if sys.platform != "win32":
+        return
+    import winreg
+
+    with winreg.OpenKey(winreg.HKEY_CURRENT_USER, _RUN_KEY, 0, winreg.KEY_SET_VALUE) as k:
+        if on:
+            winreg.SetValueEx(k, _RUN_NAME, 0, winreg.REG_SZ, _autostart_command())
+        else:
+            try:
+                winreg.DeleteValue(k, _RUN_NAME)
+            except OSError:
+                pass

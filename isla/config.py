@@ -21,6 +21,7 @@ class Config:
     approval_timeout_s: int = 110
     hide_in_fullscreen: bool = True
     lyrics_enabled: bool = True
+    ghost_opacity: float = 0.22
 
     @classmethod
     def load(cls, path: Path | None = None) -> "Config":

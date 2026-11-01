@@ -39,7 +39,6 @@ RED = QColor("#FF6B6B")
 FONT = "Segoe UI"
 
 SIZES = {"expanded": (500, 248), "approval": (470, 132), "toast": (330, 44)}
-GHOST_OPACITY = 0.22  # how visible the island stays while click-through
 TABS = ("Music", "Shelf", "Agents")
 STATUS_COLOR = {"idle": DIM, "working": ACCENT, "waiting": AMBER, "done": GREEN}
 
@@ -328,7 +327,7 @@ class Island(QWidget):
         self._collapse.stop()
         self._anim.stop()
         set_click_through(int(self.winId()), True)
-        self._fade_to(GHOST_OPACITY)
+        self._fade_to(self.cfg.ghost_opacity)
         self._ghost_poll.start(50)
 
     def _check_ghost(self) -> None:
