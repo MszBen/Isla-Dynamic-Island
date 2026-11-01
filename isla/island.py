@@ -13,10 +13,10 @@ from pathlib import Path
 
 from PySide6.QtCore import (
     QEasingCurve, QFileInfo, QMimeData, QPointF, QRectF, QSizeF, Qt, QTimer, QUrl,
-    QVariantAnimation, Signal,
+    QPropertyAnimation, QVariantAnimation, Signal,
 )
 from PySide6.QtGui import (
-    QColor, QDrag, QFont, QFontMetrics, QGuiApplication, QPainter, QPainterPath, QPen,
+    QColor, QCursor, QDrag, QFont, QFontMetrics, QGuiApplication, QPainter, QPainterPath, QPen,
     QPixmap, QPolygonF,
 )
 from PySide6.QtWidgets import QFileIconProvider, QWidget
@@ -27,7 +27,7 @@ from .lyrics import Line, current_index, fetch_lyrics
 from .mascot import Mascot
 from .media import MediaInfo, MediaService
 from .shelf import Shelf
-from .system import fullscreen_app_active
+from .system import fullscreen_app_active, set_click_through
 
 BG = QColor("#0C0B12")
 TEXT = QColor("#F2F0FA")
@@ -39,6 +39,7 @@ RED = QColor("#FF6B6B")
 FONT = "Segoe UI"
 
 SIZES = {"expanded": (500, 236), "approval": (470, 132), "toast": (330, 44)}
+GHOST_OPACITY = 0.22  # how visible the island stays while click-through
 TABS = ("Music", "Shelf", "Agents")
 STATUS_COLOR = {"idle": DIM, "working": ACCENT, "waiting": AMBER, "done": GREEN}
 
@@ -70,6 +71,8 @@ class Island(QWidget):
         self._hover = False
         self._dropping = False
         self._dragging_out = False
+        self._ghost = False
+        self._press_arg = None
         self._press: tuple[QPointF, str] | None = None
         self._last_active = time.monotonic()
         self._hits: list[tuple[QRectF, str, object]] = []
@@ -91,12 +94,17 @@ class Island(QWidget):
         self._target = self._size
         self._place(self._size)
 
+        self._fade = QPropertyAnimation(self, b"windowOpacity", self)
+        self._fade.setDuration(180)
+
         self._frame = QTimer(self)
         self._frame.timeout.connect(self._tick)
         self._collapse = QTimer(self, singleShot=True)
         self._collapse.timeout.connect(self._end_hover)
         self._expand = QTimer(self, singleShot=True)
         self._expand.timeout.connect(self._begin_hover)
+        self._ghost_poll = QTimer(self)  # watches the cursor while click-through (no mouse events arrive)
+        self._ghost_poll.timeout.connect(self._check_ghost)
         self._slow = QTimer(self)  # 1 Hz housekeeping: mood, fullscreen, clock
         self._slow.timeout.connect(self._housekeeping)
         self._slow.start(1000)
@@ -137,6 +145,8 @@ class Island(QWidget):
         return SIZES[mode]
 
     def _apply_mode(self) -> None:
+        if self._ghost:  # frozen in place so the cursor can leave the area it was over
+            return
         w, h = self._target_size()
         if abs(w - self._target.width()) < 1 and abs(h - self._target.height()) < 1:
             self.update()
@@ -303,6 +313,40 @@ class Island(QWidget):
         e.acceptProposedAction()
         self._kick()
         self.update()
+
+    # ------------------------------------------------------------------ ghost
+    def _fade_to(self, opacity: float) -> None:
+        self._fade.stop()
+        self._fade.setStartValue(self.windowOpacity())
+        self._fade.setEndValue(opacity)
+        self._fade.start()
+
+    def _enter_ghost(self) -> None:
+        """Double click: vanish and let clicks through until the cursor leaves the island's area."""
+        self._ghost = True
+        self._expand.stop()
+        self._collapse.stop()
+        self._anim.stop()
+        set_click_through(int(self.winId()), True)
+        self._fade_to(GHOST_OPACITY)
+        self._ghost_poll.start(50)
+
+    def _check_ghost(self) -> None:
+        if self.geometry().adjusted(-4, -4, 4, 4).contains(QCursor.pos()):
+            return
+        self._ghost_poll.stop()
+        self._ghost = False
+        set_click_through(int(self.winId()), False)
+        self._fade_to(1.0)
+        self._hover = self._dropping = False
+        self._apply_mode()
+        self._kick()
+
+    def mouseDoubleClickEvent(self, e) -> None:
+        if e.button() == Qt.LeftButton and self._hit(e.position())[0] is None:
+            self._enter_ghost()
+        else:
+            self.mousePressEvent(e)  # keep buttons responsive to rapid clicks
 
     # ------------------------------------------------------------------ mouse
     def _hit(self, pos: QPointF):
