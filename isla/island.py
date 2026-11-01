@@ -38,7 +38,7 @@ AMBER = QColor("#FFC857")
 RED = QColor("#FF6B6B")
 FONT = "Segoe UI"
 
-SIZES = {"expanded": (500, 236), "approval": (470, 132), "toast": (330, 44)}
+SIZES = {"expanded": (500, 248), "approval": (470, 132), "toast": (330, 44)}
 GHOST_OPACITY = 0.22  # how visible the island stays while click-through
 TABS = ("Music", "Shelf", "Agents")
 STATUS_COLOR = {"idle": DIM, "working": ACCENT, "waiting": AMBER, "done": GREEN}
@@ -461,8 +461,12 @@ class Island(QWidget):
 
     def _paint_compact(self, p, r: QRectF) -> None:
         self._mascot_at(p, QRectF(10, (r.height() - 26) / 2, 26, 26))
-        self._text(p, QRectF(46, 0, r.width() - 46 - 40, r.height()), self._compact_text(), size=10)
-        if self.media.active and self.media.playing:
+        playing = self.media.active and self.media.playing
+        if playing:
+            self._text(p, QRectF(46, 0, r.width() - 46 - 40, r.height()), self._compact_text(), size=10)
+        else:  # just the clock: centred in the whole pill
+            self._text(p, QRectF(0, 0, r.width(), r.height()), self._compact_text(), size=10, align=Qt.AlignHCenter)
+        if playing:
             self._equalizer(p, QRectF(r.width() - 34, r.height() / 2 - 8, 20, 16))
 
     def _equalizer(self, p, rect: QRectF) -> None:
@@ -577,14 +581,14 @@ class Island(QWidget):
     def _paint_lyrics(self, p, r: QRectF, pos: float) -> None:
         if not self.lines:
             msg = "Searching lyrics…" if self.cfg.lyrics_enabled and self._lines_key is None and self.media.title else "No synced lyrics"
-            self._text(p, QRectF(0, 178, r.width(), 40), msg, DIM, 9, align=Qt.AlignHCenter)
+            self._text(p, QRectF(0, 186, r.width(), 40), msg, DIM, 9, align=Qt.AlignHCenter)
             return
         i = current_index(self.lines, pos)
         for slot, idx in enumerate((i - 1, i, i + 1)):
             if not 0 <= idx < len(self.lines):
                 continue
             line = self.lines[idx]
-            rect = QRectF(20, 148 + slot * 25, r.width() - 40, 24)
+            rect = QRectF(20, 162 + slot * 25, r.width() - 40, 24)
             cur = idx == i
             self._text(p, rect, line.text or "♪", TEXT if cur else DIM, 12 if cur else 10, cur, Qt.AlignHCenter)
             self._hit_rect(rect, "seek", line.time)
