@@ -7,12 +7,12 @@ from PySide6.QtCore import QRectF, Qt
 from PySide6.QtGui import QAction, QColor, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
-from . import hooks_install
 from .agents import AgentHub
 from .config import Config, data_dir
 from .island import Island
 from .mascot import Mascot
 from .media import MediaService
+from .settings import SettingsWindow
 from .shelf import Shelf
 
 
@@ -45,11 +45,19 @@ def run() -> int:
 
     tray = QSystemTrayIcon(_tray_icon(), app)
     menu = QMenu()
-    install = QAction("Install Claude Code hooks", menu)
-    install.triggered.connect(lambda: tray.showMessage("Isla", hooks_install.install()))
+    settings = SettingsWindow(cfg, hub)
+
+    def open_settings() -> None:
+        settings.show()
+        settings.raise_()
+        settings.activateWindow()
+
+    open_ = QAction("Settings…", menu)
+    open_.triggered.connect(open_settings)
+    tray.activated.connect(lambda r: open_settings() if r == QSystemTrayIcon.Trigger else None)
     quit_ = QAction("Quit Isla", menu)
     quit_.triggered.connect(app.quit)
-    menu.addAction(install)
+    menu.addAction(open_)
     menu.addSeparator()
     menu.addAction(quit_)
     tray.setContextMenu(menu)
