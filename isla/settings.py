@@ -2,19 +2,23 @@
 from __future__ import annotations
 
 from PySide6.QtCore import QEasingCurve, QRectF, Qt, QVariantAnimation
-from PySide6.QtGui import QColor, QPainter, QPixmap
+from PySide6.QtGui import QColor, QGuiApplication, QPainter, QPixmap
 from PySide6.QtWidgets import (
-    QCheckBox, QFrame, QHBoxLayout, QLabel, QPushButton, QSlider, QVBoxLayout, QWidget,
+    QCheckBox, QFrame, QHBoxLayout, QLabel, QPushButton, QScrollArea, QSlider, QVBoxLayout, QWidget,
 )
 
-from . import hooks_install
+from . import __version__, hooks_install
 from .agents import AgentHub
 from .config import Config
 from .mascot import Mascot
 from .system import autostart_enabled, set_autostart
 
 STYLE = """
-QWidget#root { background: #0C0B12; }
+QWidget#root, QWidget#content, QScrollArea { background: #0C0B12; border: none; }
+QScrollBar:vertical { width: 8px; background: transparent; margin: 0; }
+QScrollBar::handle:vertical { background: rgba(255,255,255,0.18); border-radius: 4px; min-height: 30px; }
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
+QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: transparent; }
 QWidget { color: #F2F0FA; font-family: 'Segoe UI'; font-size: 10pt; }
 QLabel#title { font-size: 20pt; font-weight: 700; }
 QLabel#subtitle, QLabel#hint, QLabel#value { color: #8E8AA3; }
@@ -77,8 +81,9 @@ class Switch(QCheckBox):
         p.drawEllipse(QRectF(3 + 20 * self._pos, 3, 18, 18))
 
 
-def _label(text: str, name: str = "") -> QLabel:
+def _label(text: str, name: str = "", wrap: bool = False) -> QLabel:
     lab = QLabel(text)
+    lab.setWordWrap(wrap)
     if name:
         lab.setObjectName(name)
     return lab
@@ -95,7 +100,7 @@ class Card(QFrame):
         self._lay.setSpacing(0)
         self._rows = 0
 
-    def row(self, title: str, control: QWidget | None = None, hint: str = "") -> None:
+    def row(self, title: str, control: QWidget | None = None, hint: str = "") -> QLabel | None:
         if self._rows:
             line = QFrame()
             line.setObjectName("divider")
@@ -107,12 +112,15 @@ class Card(QFrame):
         text = QVBoxLayout()
         text.setSpacing(1)
         text.addWidget(_label(title))
+        hint_label = None
         if hint:
-            text.addWidget(_label(hint, "hint"))
+            hint_label = _label(hint, "hint", wrap=True)
+            text.addWidget(hint_label)
         h.addLayout(text, 1)
         if control is not None:
             h.addWidget(control, 0, Qt.AlignVCenter)
         self._lay.addWidget(box)
+        return hint_label
 
 
 class SettingsWindow(QWidget):
@@ -120,11 +128,24 @@ class SettingsWindow(QWidget):
         super().__init__()
         self.cfg, self.hub = cfg, hub
         self._on_focus_change = on_focus_change
+        self.on_tour = None   # set by the app: open the quick tour
+        self.on_quit = None   # set by the app: quit Isla
         self.setObjectName("root")
         self.setWindowTitle("Isla Settings")
-        self.setMinimumWidth(480)
+        self.setMinimumWidth(500)
         self.setStyleSheet(STYLE)
-        root = QVBoxLayout(self)
+        # everything scrolls, so the window also fits small or high-DPI screens
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        content = QWidget()
+        content.setObjectName("content")
+        scroll.setWidget(content)
+        outer.addWidget(scroll)
+        root = QVBoxLayout(content)
         root.setContentsMargins(24, 22, 24, 24)
         root.setSpacing(8)
 
@@ -141,7 +162,7 @@ class SettingsWindow(QWidget):
         titles = QVBoxLayout()
         titles.setSpacing(0)
         titles.addWidget(_label("Isla", "title"))
-        titles.addWidget(_label("Settings", "subtitle"))
+        titles.addWidget(_label("Settings · changes save automatically", "subtitle", wrap=True))
         head.addWidget(face)
         head.addSpacing(6)
         head.addLayout(titles, 1)
@@ -154,7 +175,7 @@ class SettingsWindow(QWidget):
         self.autostart.setChecked(autostart_enabled())
         self.autostart.toggled.connect(self._on_autostart)
         card = Card()
-        card.row("Start with Windows", self.autostart, "Launch Isla when you sign in")
+        card.row("Start with Windows", self.autostart, "Open Isla automatically when you sign in")
         root.addWidget(card)
         root.addSpacing(6)
 
@@ -175,12 +196,12 @@ class SettingsWindow(QWidget):
         self.collapse, self._collapse_val = self._slider(100, 2000, cfg.collapse_delay_ms, "{} ms", "collapse_delay_ms", 50)
         self.ghost, self._ghost_val = self._slider(5, 60, round(cfg.ghost_opacity * 100), "{}%", "ghost_opacity", 1, 0.01)
         card = Card()
-        card.row("Hide in fullscreen", self.fullscreen, "Step aside for games and videos")
-        card.row("Status peeks", self.peeks, "Charger and headphones animations")
+        card.row("Hide in fullscreen", self.fullscreen, "Step out of the way of games and full-screen videos")
+        card.row("Status peeks", self.peeks, "Short pop-ups when you plug in a charger or headphones")
         card.row("Confetti", self.confetti, "When Claude or a focus session finishes")
-        card.row("Synced lyrics", self.lyrics, "Fetched from LRCLIB")
-        card.row("Collapse delay", self._with_value(self.collapse, self._collapse_val), "After the mouse leaves")
-        card.row("Ghost opacity", self._with_value(self.ghost, self._ghost_val), "After a double-click")
+        card.row("Synced lyrics", self.lyrics, "Looked up online (lrclib.net) for the song that is playing")
+        card.row("Close delay", self._with_value(self.collapse, self._collapse_val), "How long the island waits after your mouse leaves")
+        card.row("See-through level", self._with_value(self.ghost, self._ghost_val), "How faint Isla gets after you double-click it")
         root.addWidget(card)
         root.addSpacing(6)
 
@@ -193,19 +214,19 @@ class SettingsWindow(QWidget):
         self.f_short, self._f_short_val = self._slider(1, 30, cfg.focus_short_min, "{} min", "focus_short_min", 1)
         self.f_long, self._f_long_val = self._slider(5, 60, cfg.focus_long_min, "{} min", "focus_long_min", 5)
         card = Card()
-        card.row("Focus length", self._with_value(self.f_work, self._f_work_val), "Pomodoro work session")
+        card.row("Focus length", self._with_value(self.f_work, self._f_work_val), "One focus session (Pomodoro)")
         card.row("Short break", self._with_value(self.f_short, self._f_short_val))
-        card.row("Long break", self._with_value(self.f_long, self._f_long_val), "After every 4 sessions")
-        card.row("Chime", self.chime, "Plays when a phase ends")
+        card.row("Long break", self._with_value(self.f_long, self._f_long_val), "Taken after every 4th focus session")
+        card.row("Chime", self.chime, "A soft sound when a focus session or break ends")
         root.addWidget(card)
         root.addSpacing(6)
 
         # agents
         root.addWidget(_label("CLAUDE CODE", "section"))
         self.hook_status = _label("", "status")
-        self.install = QPushButton("Install")
+        self.install = QPushButton("Connect")
         self.install.setObjectName("primary")
-        self.remove = QPushButton("Remove")
+        self.remove = QPushButton("Disconnect")
         self.install.clicked.connect(lambda: self._hooks(True))
         self.remove.clicked.connect(lambda: self._hooks(False))
         buttons = QWidget()
@@ -218,10 +239,25 @@ class SettingsWindow(QWidget):
         self.timeout, self._timeout_val = self._slider(10, 120, int(cfg.approval_timeout_s), "{} s", "approval_timeout_s", 5)
         self.timeout.valueChanged.connect(lambda v: setattr(self.hub, "approval_timeout", v))
         card = Card()
-        card.row("Hooks", buttons, "Shows agent activity and approvals")
-        card.row("Approval wait", self._with_value(self.timeout, self._timeout_val), "Then Claude Code asks in the terminal")
+        self.hook_hint = card.row("Connection", buttons, "Lets Isla show Claude's progress and approve its actions")
+        card.row("Approval wait", self._with_value(self.timeout, self._timeout_val), "If you don't answer in time, Claude Code asks in its own window")
         root.addWidget(card)
+
+        # footer
+        root.addSpacing(10)
+        foot = QHBoxLayout()
+        foot.addWidget(_label(f"Isla {__version__}", "hint"))
+        foot.addStretch(1)
+        tour = QPushButton("Quick tour")
+        tour.clicked.connect(lambda: self.on_tour and self.on_tour())
+        quit_btn = QPushButton("Quit Isla")
+        quit_btn.clicked.connect(lambda: self.on_quit and self.on_quit())
+        foot.addWidget(tour)
+        foot.addWidget(quit_btn)
+        root.addLayout(foot)
         self._refresh_hooks()
+        screen = QGuiApplication.primaryScreen().availableGeometry()
+        self.resize(540, min(content.sizeHint().height() + 4, int(screen.height() * 0.88)))
 
     # -- helpers -------------------------------------------------------
     def _slider(self, lo: int, hi: int, value: int, fmt: str, name: str, step: int, scale: float = 1.0):
@@ -236,7 +272,12 @@ class SettingsWindow(QWidget):
         lab.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
 
         def changed(v: int) -> None:
-            v = round(v / step) * step if step > 1 else v
+            snapped = max(lo, round(v / step) * step) if step > 1 else v
+            if snapped != v:
+                s.blockSignals(True)
+                s.setValue(snapped)
+                s.blockSignals(False)
+            v = snapped
             lab.setText(fmt.format(v))
             self._set(name, round(v * scale, 2) if scale != 1.0 else v)
 
@@ -271,13 +312,16 @@ class SettingsWindow(QWidget):
         try:
             hooks_install.install() if install else hooks_install.uninstall()
         except (OSError, ValueError):
-            self.hook_status.setText("Failed")
+            self.hook_status.setText("Couldn't update Claude Code's settings")
+            self.hook_status.setStyleSheet("color: #FF6B6B;")
             return
         self._refresh_hooks()
+        if install:
+            self.hook_hint.setText("Restart any open Claude Code sessions to pick this up")
 
     def _refresh_hooks(self) -> None:
         on = hooks_install.is_installed()
-        self.hook_status.setText("● Connected" if on else "○ Not installed")
+        self.hook_status.setText("● Connected" if on else "○ Not connected")
         self.hook_status.setStyleSheet("color: #5FD38D;" if on else "color: #8E8AA3;")
         self.install.setEnabled(not on)
         self.remove.setEnabled(on)
