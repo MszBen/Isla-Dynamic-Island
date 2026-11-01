@@ -11,6 +11,8 @@
 ![Python](https://img.shields.io/badge/Python-3.12-B9A7FF?style=for-the-badge&labelColor=14102A&logo=python&logoColor=white)
 &nbsp;
 [![License](https://img.shields.io/badge/license-PolyForm%20Noncommercial-B9A7FF?style=for-the-badge&labelColor=14102A)](LICENSE)
+&nbsp;
+[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/E6E229VTTJ)
 
 <br>
 
