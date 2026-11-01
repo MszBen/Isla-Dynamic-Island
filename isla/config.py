@@ -24,6 +24,7 @@ class Config:
     ghost_opacity: float = 0.22
     status_peeks: bool = True
     confetti: bool = True
+    welcomed: bool = False  # first-run tour shown
     focus_work_min: int = 25
     focus_short_min: int = 5
     focus_long_min: int = 15

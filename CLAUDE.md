@@ -42,10 +42,25 @@ isla/
   shelf.py        shelf store (JSON of paths)
   agents.py       session model + localhost hook server
   hooks_install.py  safe settings.json merge
-  system.py       fullscreen detection
+  system.py       fullscreen detection, click-through, autostart
+  settings.py     separate settings window (scrolls; autosaves)
+  welcome.py      first-run quick tour
+  focus.py        pomodoro logic (pure)
+  confetti.py     click-through confetti overlay
+  power.py, devices.py, sound.py   charger / headphone peeks, chime
 hooks/isla_hook.py  relay executed by Claude Code
 tests/              pytest, no Qt display or network required
 ```
+
+## UX principles (keep these when adding features)
+
+- **Discoverable without docs**: every painted button has a hover hint in `TIPS` (island.py) and a pointer cursor; a test enforces it.
+- **No dead ends**: every tab has an empty state that says what to do next, ideally with a button (e.g. Agents -> Connect).
+- **No terminal for normal use**: anything the CLI can do (connect Claude Code, quit, settings) is also reachable from the island's right-click menu, the tray, or Settings.
+- **Never trap the user**: Quit is in three places; a second launch says Isla is already running; double-click makes it see-through.
+- **Respect the system**: clock follows the Windows 12/24h setting; hides for fullscreen apps; never steals focus.
+- **Settings**: plain words, a hint under every option, changes apply and save immediately, window scrolls on small screens.
+- **Failures are visible**: windowless runs log to `%APPDATA%\Isla\isla.log`; problems the user can act on show from the tray.
 
 ## Rules for working here
 

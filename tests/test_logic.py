@@ -214,3 +214,23 @@ def test_confetti_spawn_and_physics():
     for p in ps:
         p.advance(LIFE)
     assert not any(p.alive for p in ps) and all(p.opacity == 0 for p in ps)
+
+
+def test_every_island_button_has_a_hover_hint():
+    import re
+    from isla.island import TIPS
+    src = open("isla/island.py", encoding="utf-8").read()
+    kinds = set(re.findall(r'"(focus_(?:toggle|reset|skip|break|minus|plus)|connect|clear|deny|once|always|remove|tile|seek|bar|prev|next|toggle|mascot)"', src))
+    self_explanatory = {"focus_toggle"}
+    assert {k for k in kinds if k not in TIPS} <= self_explanatory
+
+
+def test_shelf_clear_and_config_defaults(tmp_path):
+    from isla.config import Config
+    f = tmp_path / "a.txt"
+    f.write_text("x")
+    s = Shelf(tmp_path / "s.json")
+    s.add([str(f)])
+    s.clear()
+    assert Shelf(tmp_path / "s.json").items == []
+    assert Config().welcomed is False  # first run shows the tour
