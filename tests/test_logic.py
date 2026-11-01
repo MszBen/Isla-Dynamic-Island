@@ -1,0 +1,76 @@
+import json
+
+from isla import hooks_install
+from isla.agents import Session, apply_event, describe_tool
+from isla.lyrics import current_index, parse_lrc
+from isla.shelf import Shelf
+
+
+def test_parse_lrc_sorted_and_multistamp():
+    lines = parse_lrc("[00:12.50]hello\n[00:05.00][00:30.00]chorus\nno stamp\n")
+    assert [(l.time, l.text) for l in lines] == [(5.0, "chorus"), (12.5, "hello"), (30.0, "chorus")]
+
+
+def test_current_index():
+    lines = parse_lrc("[00:05.00]a\n[00:10.00]b")
+    assert current_index(lines, 1) == -1
+    assert current_index(lines, 5) == 0
+    assert current_index(lines, 99) == 1
+
+
+def test_describe_tool():
+    assert describe_tool("Read", {"file_path": "C:/x/foo.py"}) == "Reading foo.py"
+    assert describe_tool("Bash", {"command": "pytest -q"}) == "Running pytest -q"
+    assert describe_tool("Weird", {}) == "Using Weird"
+
+
+def test_apply_event_lifecycle():
+    sessions: dict[str, Session] = {}
+    apply_event(sessions, {"session_id": "a", "hook_event_name": "PreToolUse", "cwd": "C:/p/proj",
+                           "tool_name": "Edit", "tool_input": {"file_path": "m.py"}})
+    s = sessions["a"]
+    assert (s.status, s.activity, s.project) == ("working", "Editing m.py", "proj")
+    apply_event(sessions, {"session_id": "a", "hook_event_name": "Stop"})
+    assert s.status == "done"
+    apply_event(sessions, {"session_id": "a", "hook_event_name": "SessionEnd"})
+    assert "a" not in sessions
+
+
+def test_hook_merge_idempotent_and_preserves_others():
+    base = {"model": "x", "hooks": {"Stop": [{"matcher": "", "hooks": [{"type": "command", "command": "mine"}]}]}}
+    once = hooks_install.merge(base, "python isla_hook.py")
+    twice = hooks_install.merge(once, "python isla_hook.py")
+    assert once == twice
+    assert once["model"] == "x"
+    assert len(once["hooks"]["Stop"]) == 2  # user's hook kept + ours
+    assert hooks_install.remove(once) == base
+
+
+def test_shelf_roundtrip(tmp_path):
+    f = tmp_path / "a.txt"
+    f.write_text("hi")
+    store = tmp_path / "shelf.json"
+    s = Shelf(store)
+    assert s.add([str(f), str(f), str(tmp_path / "nope")]) == 1
+    assert [i.name for i in Shelf(store).items] == ["a.txt"]
+    s.remove(str(f.resolve()) if False else s.items[0].path)
+    assert Shelf(store).items == []
+    assert json.loads(store.read_text()) == []
+
+
+def test_permission_request_roundtrip():
+    import threading
+    from isla.agents import AgentHub
+
+    hub = AgentHub(0, approval_timeout=5)
+    hub.approval_requested.connect(lambda ap: threading.Timer(0.05, hub.resolve, (ap.id, "allow")).start())
+    out = json.loads(hub.handle({"session_id": "s", "hook_event_name": "PermissionRequest",
+                                 "tool_name": "Bash", "tool_input": {"command": "ls"}}))
+    assert out["hookSpecificOutput"]["decision"]["behavior"] == "allow"
+
+
+def test_permission_timeout_falls_back():
+    from isla.agents import AgentHub
+
+    hub = AgentHub(0, approval_timeout=0.1)
+    assert hub.handle({"session_id": "s", "hook_event_name": "PermissionRequest", "tool_name": "Bash"}) == ""
