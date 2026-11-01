@@ -55,6 +55,10 @@ class Switch(QCheckBox):
         self._anim.valueChanged.connect(self._set_pos)
         self.toggled.connect(self._slide)
 
+    def hitButton(self, pos) -> bool:
+        """Clicking anywhere on the switch toggles it (a QCheckBox only reacts on its tiny indicator by default)."""
+        return self.rect().contains(pos)
+
     def _set_pos(self, v) -> None:
         self._pos = float(v)
         self.update()
