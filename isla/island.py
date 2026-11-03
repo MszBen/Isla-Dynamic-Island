@@ -60,7 +60,8 @@ TIPS = {
     "focus_break": "Pause focus for a short break; it resumes by itself afterwards",
     "focus_minus": "Shorter (the mouse wheel works too)",
     "focus_plus": "Longer (the mouse wheel works too)",
-    "tile": "Click to open, drag out to move or copy it somewhere",
+    "tile": "Click to open, drag out to move or copy it. Ctrl+click to pick several",
+    "group": "These were added together. Drag to take them all, click to pick them all",
     "remove": "Remove from the shelf (the file itself is not deleted)",
     "clear": "Remove everything from the shelf (files are not deleted)",
     "deny": "Block this action",
@@ -130,6 +131,8 @@ class Island(QWidget):
         self._hooks_checked = 0.0
         self._press_arg = None
         self._press: tuple[QPointF, str] | None = None
+        self._sel: set[str] = set()  # shelf paths picked for a multi-file drag
+        self._press_ctrl = False
         self._last_active = time.monotonic()
         self._hits: list[tuple[QRectF, str, object]] = []
         self._icons: dict[str, QPixmap] = {}
@@ -523,8 +526,12 @@ class Island(QWidget):
         kind, arg = self._hit(e.position())
         self._press = (e.position(), "") if kind is None else (e.position(), kind)
         self._press_arg = arg
-        if kind == "tile":
-            return  # decided on release (open) or move (drag out)
+        self._press_ctrl = bool(e.modifiers() & Qt.ControlModifier)
+        if kind in ("tile", "group"):
+            if kind == "tile" and self._press_ctrl:
+                self._sel ^= {arg}
+                self.update()
+            return  # decided on release (open / pick) or move (drag out)
         self._press = None
         m = self.media_svc
         if kind == "mascot":
@@ -583,17 +590,22 @@ class Island(QWidget):
                 else:
                     QToolTip.hideText()
             return
-        if not (self._press and self._press[1] == "tile" and e.buttons() & Qt.LeftButton):
+        if not (self._press and self._press[1] in ("tile", "group") and e.buttons() & Qt.LeftButton):
             return
         if (e.position() - self._press[0]).manhattanLength() < 8:
             return
-        path = self._press_arg
+        if self._press[1] == "group":
+            paths = list(self._press_arg)
+        elif self._press_arg in self._sel:
+            paths = [i.path for i in self.shelf.ordered() if i.path in self._sel]  # the whole picked set
+        else:
+            paths = [self._press_arg]
         self._press = None
         mime = QMimeData()
-        mime.setUrls([QUrl.fromLocalFile(path)])
+        mime.setUrls([QUrl.fromLocalFile(p) for p in paths])
         drag = QDrag(self)
         drag.setMimeData(mime)
-        pm = self._icon(path)
+        pm = self._icon(paths[0])
         drag.setPixmap(pm)
         self._dragging_out = True
         drag.exec(Qt.CopyAction)
@@ -602,7 +614,12 @@ class Island(QWidget):
             self._collapse.start(self.cfg.collapse_delay_ms)
 
     def mouseReleaseEvent(self, e) -> None:
-        if self._press and self._press[1] == "tile":
+        if self._press and self._press[1] == "group":
+            members = set(self._press_arg)
+            self._sel = self._sel - members if members <= self._sel else self._sel | members
+            self.update()
+        elif self._press and self._press[1] == "tile" and not self._press_ctrl:
+            self._sel.clear()
             try:
                 os.startfile(self._press_arg)  # type: ignore[attr-defined]
             except (OSError, AttributeError):
@@ -990,11 +1007,33 @@ class Island(QWidget):
             if self._dropping or not items:
                 return
         cols, tw, th = 4, 114, 82
-        for n, item in enumerate(items[::-1][:8]):  # newest first
-            col, row = n % cols, n // cols
-            tile = QRectF(area.left() + col * (tw + 5), area.top() + row * (th + 6), tw, th)
-            p.setPen(Qt.NoPen)
-            p.setBrush(QColor(255, 255, 255, 18))
+        self._sel &= {i.path for i in items}
+        members: dict[str, list[str]] = {}  # path -> everyone in its group (only real groups)
+        for block in self.shelf.blocks():
+            if len(block) > 1:
+                paths = [i.path for i in block]
+                members.update({q: paths for q in paths})
+        shown = self.shelf.ordered()[:8]  # newest first, groups kept together
+        rects = [QRectF(area.left() + n % cols * (tw + 5), area.top() + n // cols * (th + 6), tw, th) for n in range(len(shown))]
+        # one backdrop per run of group members on a row; its padding doubles as a "grab the group" handle
+        start = 0
+        while start < len(shown):
+            end = start + 1
+            grp = members.get(shown[start].path)
+            while grp and end < len(shown) and members.get(shown[end].path) is grp and end % cols:
+                end += 1
+            if grp:
+                back = QRectF(rects[start].left() - 4, rects[start].top() - 4, rects[end - 1].right() - rects[start].left() + 8, th + 8)
+                p.setPen(QPen(QColor(185, 167, 255, 90), 1))
+                p.setBrush(QColor(185, 167, 255, 28))
+                p.drawRoundedRect(back, 16, 16)
+                self._hit_rect(back, "group", grp)
+            start = end
+        for n, item in enumerate(shown):
+            tile = rects[n]
+            sel = item.path in self._sel
+            p.setPen(QPen(self.accent, 1.5) if sel else Qt.NoPen)
+            p.setBrush(QColor(185, 167, 255, 60) if sel else QColor(255, 255, 255, 18))
             p.drawRoundedRect(tile, 14, 14)
             p.drawPixmap(int(tile.center().x() - 16), int(tile.top() + 8), self._icon(item.path))
             self._text(p, QRectF(tile.left() + 6, tile.top() + 44, tw - 12, 18), item.name, TEXT, 9, align=Qt.AlignHCenter)
@@ -1003,7 +1042,15 @@ class Island(QWidget):
             self._text(p, x, "×", DIM, 11, align=Qt.AlignHCenter)
             self._hit_rect(tile, "tile", item.path)
             self._hit_rect(x, "remove", item.path)
-        self._text(p, QRectF(18, r.height() - 24, 260, 18), "Click to open · drag out to move or copy", DIM, 8)
+            grp = members.get(item.path)
+            if grp and (n == 0 or members.get(shown[n - 1].path) is not grp or n % cols == 0):
+                chip = QRectF(tile.left() + 4, tile.top() + 4, 24, 16)  # count badge = group handle
+                p.setPen(Qt.NoPen)
+                p.setBrush(self.accent)
+                p.drawRoundedRect(chip, 8, 8)
+                self._text(p, chip, str(len(grp)), QColor(20, 16, 40), 8, True, Qt.AlignHCenter)
+                self._hit_rect(chip, "group", grp)
+        self._text(p, QRectF(18, r.height() - 24, 280, 18), "Click to open · Ctrl+click to pick several · drag out", DIM, 8)
         clear = QRectF(r.width() - 92, r.height() - 26, 76, 20)
         self._text(p, clear, "Clear all", DIM, 8, align=Qt.AlignRight)
         self._hit_rect(clear, "clear")

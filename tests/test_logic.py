@@ -220,9 +220,28 @@ def test_every_island_button_has_a_hover_hint():
     import re
     from isla.island import TIPS
     src = open("isla/island.py", encoding="utf-8").read()
-    kinds = set(re.findall(r'"(focus_(?:toggle|reset|skip|break|minus|plus)|connect|clear|deny|once|always|remove|tile|seek|bar|prev|next|toggle|mascot)"', src))
+    kinds = set(re.findall(r'"(focus_(?:toggle|reset|skip|break|minus|plus)|connect|clear|deny|once|always|remove|tile|group|seek|bar|prev|next|toggle|mascot)"', src))
     self_explanatory = {"focus_toggle"}
     assert {k for k in kinds if k not in TIPS} <= self_explanatory
+
+
+def test_shelf_groups_files_added_together(tmp_path):
+    files = []
+    for n in "abcd":
+        f = tmp_path / f"{n}.txt"
+        f.write_text(n)
+        files.append(str(f))
+    store = tmp_path / "s.json"
+    s = Shelf(store)
+    s.add([files[0]])
+    s.add(files[1:3])  # dropped together -> one group
+    s.add([files[3]])
+    blocks = [[i.name for i in b] for b in Shelf(store).blocks()]  # survives a restart
+    assert blocks == [["d.txt"], ["b.txt", "c.txt"], ["a.txt"]]  # newest first, group kept together
+    s.remove(files[1])  # a lone survivor is no longer shown as a group
+    assert [len(b) for b in s.blocks()] == [1, 1, 1]
+    store.write_text(json.dumps([files[0]]))  # old format: plain list of paths
+    assert [i.name for i in Shelf(store).items] == ["a.txt"]
 
 
 def test_shelf_clear_and_config_defaults(tmp_path):
