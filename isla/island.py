@@ -675,9 +675,14 @@ class Island(QWidget):
         }[mode](p, r)
         p.end()
 
-    def _text(self, p, rect: QRectF, text: str, color=TEXT, size=10, bold=False, align=Qt.AlignLeft):
+    @staticmethod
+    def _font(size: float, bold: bool = False) -> QFont:
         f = QFont(FONT, size)
         f.setBold(bold)
+        return f
+
+    def _text(self, p, rect: QRectF, text: str, color=TEXT, size=10, bold=False, align=Qt.AlignLeft):
+        f = self._font(size, bold)
         p.setFont(f)
         p.setPen(color)
         el = QFontMetrics(f).elidedText(text, Qt.ElideRight, int(rect.width()))
@@ -1076,9 +1081,15 @@ class Island(QWidget):
             p.setPen(Qt.NoPen)
             p.setBrush(CLAUDE if running else STATUS_COLOR.get(s.status, DIM))
             p.drawEllipse(QPointF(30, y + 14), 5, 5)
-            self._text(p, QRectF(46, y, 110, 28), s.project, TEXT, 10, True)
-            stats = ""
+            stats, stats_w = "", 0
             if running:
                 stats = fmt_minutes(s.elapsed) + (f" · {fmt_tokens(s.tokens)}" if s.tokens is not None else "")
-                self._text(p, QRectF(r.width() - 140, y, 124, 28), stats, CLAUDE, 10, True, Qt.AlignRight)
-            self._text(p, QRectF(160, y, r.width() - 160 - (150 if stats else 20), 28), s.activity, DIM, 10)
+                stats_w = QFontMetrics(self._font(10, True)).horizontalAdvance(stats) + 8
+                self._text(p, QRectF(r.width() - 16 - stats_w, y, stats_w, 28), stats, CLAUDE, 10, True, Qt.AlignRight)
+            # the project gets the room it needs; only when both don't fit does it shrink (the activity keeps priority)
+            avail = r.width() - 46 - 16 - (stats_w + 10 if stats else 0) - 12
+            proj_w = QFontMetrics(self._font(10, True)).horizontalAdvance(s.project) + 4
+            act_w = QFontMetrics(self._font(10)).horizontalAdvance(s.activity) + 4
+            proj_w = proj_w if proj_w + act_w <= avail else min(proj_w, max(60, avail - act_w))
+            self._text(p, QRectF(46, y, proj_w, 28), s.project, TEXT, 10, True)
+            self._text(p, QRectF(46 + proj_w + 12, y, max(0, avail - proj_w), 28), s.activity, DIM, 10)
