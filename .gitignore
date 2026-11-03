@@ -218,3 +218,17 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Promo video (reel): generator script, rendered output and any video files
+docs/reel/
+docs/video-creation
+docs/make_reel.py
+docs/make_lofi.py
+video-template/
+docs/reel-remotion/
+docs/reel_timing.py
+*.mp4
+*.mov
+*.webm
+*.mkv
+*.avi
