@@ -18,7 +18,7 @@
 
 <img src="docs/assets/hero.gif" alt="Isla in action: music with synced lyrics, focus timer, file shelf, Claude Code approvals and confetti" width="720">
 
-**A little island at the top of your screen that shows your music, keeps you focused, holds your files,<br>and lets you watch and approve [Claude Code](https://claude.com/claude-code) without leaving what you're doing.**
+**A little island at the top of your screen that shows your music, keeps you focused, holds your files,<br>remembers what you copy, and lets you watch and approve [Claude Code](https://claude.com/claude-code) without leaving what you're doing.**
 
 [**⬇ Download Isla.exe**](https://github.com/MszBen/Isla-Dynamic-Island/releases/latest) &nbsp;·&nbsp; [Features](#-features) &nbsp;·&nbsp; [Tips](#-tips) &nbsp;·&nbsp; [Claude Code](#-connect-claude-code) &nbsp;·&nbsp; [Build it yourself](#-build-it-yourself)
 
@@ -65,7 +65,7 @@ A Pomodoro timer that counts down right in the island, with a soft chime when it
 <td width="50%" valign="top">
 
 ### 📥 File shelf
-Drop files on the island to keep them handy, then drag them out into any app, a chat, an email, or another folder. Files aren't copied or moved; the shelf just remembers where they are.
+Drop files on the island to keep them handy, then drag them out into any app, a chat, an email, or another folder. Files dropped together **stay grouped**: drag the whole group, **Ctrl+click** to pick several items (even from different groups) and drag them at once, or drag just one. Files aren't copied or moved; the shelf just remembers where they are.
 
 <img src="docs/assets/shelf.png" alt="File shelf with files">
 
@@ -78,6 +78,17 @@ See which session is working, **how many minutes it's been going and how many to
 <img src="docs/assets/claude.png" alt="Island in Claude orange showing minutes and tokens">
 
 </td>
+</tr>
+</table>
+
+### 📋 Clipboard history <sup>new in 1.1</sup>
+
+The **Clips** tab remembers what you copy and lets you **search** it. Click a clip to copy it again. If Windows' own clipboard history (**Win+V**) is turned on, those items show up here too. Copies from password managers are ignored, and clips are kept **in memory only**, so they're gone when Isla quits.
+
+<table>
+<tr>
+<td width="50%"><img src="docs/assets/clips.png" alt="Clips tab listing recent copies"><br><sub>Everything you copied, newest first</sub></td>
+<td width="50%"><img src="docs/assets/clips-search.png" alt="Clips tab filtered by a search"><br><sub>Type a few words to filter</sub></td>
 </tr>
 </table>
 
@@ -98,6 +109,8 @@ When Claude Code wants to run something, the request appears on the island. **Al
 </table>
 
 - 🫧 **A mascot with moods**: it's happy when music plays, focused when Claude works, curious when it needs you, sleepy when you've been away, and dizzy if you poke it too much.
+- 🖥️ **Your screen, your choice**: with more than one display, pick which one the island sits on in **Settings → Display**.
+- ⚙️ **Settings one click away**: there's a cog right on the island. While Settings is open, the mascot gets her head opened up and worked on by a pair of robot arms.
 - 👻 **Always within reach**: *double-click* the island and it fades to see-through, and clicks pass straight through to whatever it covered, until you move your mouse away.
 - 🎮 **Stays out of the way**: it hides for fullscreen games and videos.
 - 🔒 **Private**: no account, no telemetry. Everything stays on your PC. See [Privacy](#-privacy).
@@ -109,9 +122,11 @@ When Claude Code wants to run something, the request appears on the island. **Al
 | Do this | To get this |
 |---|---|
 | **Hover** over the island | It expands into **Music · Focus · Shelf · Clips · Agents** tabs |
-| **Drop files** on it | They land on the shelf |
+| **Drop files** on it | They land on the shelf, grouped together |
+| **Ctrl+click** shelf items | Pick several and drag them out at once |
+| **Copy** something, open **Clips** | Search and re-copy anything from your clipboard history |
 | **Double-click** it | See-through and click-through until you move away |
-| **Right-click** it | Settings, quick tour, quit |
+| **Click the cog** or **right-click** it | Settings, quick tour, quit |
 | **Scroll** over the Focus tab | Make the timer shorter or longer |
 | **Poke** the mascot | It reacts (a few pokes make it dizzy) |
 | **Click the tray icon** | Settings (look under the ^ arrow if you can't see it) |
@@ -123,7 +138,7 @@ Every button also has a hover hint, so you can't get lost.
 <br>
 <div align="center"><img src="docs/assets/settings.png" alt="Settings window" width="420"></div>
 
-Everything saves the moment you change it. You can set the focus lengths, the chime, confetti and status pop-ups, how fast the island closes, how see-through it gets, lyrics, and starting with Windows.
+Everything saves the moment you change it. You can set the focus lengths, the chime, confetti and status pop-ups, how fast the island closes, how see-through it gets, lyrics, which display it sits on (when you have more than one), and starting with Windows.
 </details>
 
 ---
@@ -143,6 +158,7 @@ Isla adds a small relay to Claude Code's hooks in `~/.claude/settings.json` (a b
 - No account, no analytics, no telemetry.
 - The Claude Code connection only listens on `127.0.0.1` (your own PC) and never leaves it.
 - The only online lookup is **lyrics**: the artist, title and length of the song playing are sent to [lrclib.net](https://lrclib.net). Turn it off in Settings.
+- Clipboard history is kept in memory only and never written to disk. Copies from password managers are skipped.
 - Your shelf, settings and a log live in `%APPDATA%\Isla`.
 
 ---
@@ -192,7 +208,7 @@ powershell -ExecutionPolicy Bypass -File packaging\build.ps1
 # → dist\Isla.exe
 ```
 
-Maintainers: see [`docs/RELEASING.md`](docs/RELEASING.md) for how releases are made. The design and roadmap live in [`CLAUDE.md`](CLAUDE.md). To regenerate the images in this README run `python docs/make_assets.py`.
+Maintainers: see [`docs/RELEASING.md`](docs/RELEASING.md) for how releases are made. What changed in each version is in the [changelog](CHANGELOG.md). The design and roadmap live in [`CLAUDE.md`](CLAUDE.md). To regenerate the images in this README run `python docs/make_assets.py`.
 
 ---
 

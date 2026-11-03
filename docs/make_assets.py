@@ -47,6 +47,7 @@ for name, size in (("Holiday photos.zip", 48_000_000), ("Invoice-March.pdf", 220
     shelf.add([str(f)])
 isl = Island(cfg, MediaService(), hub, shelf, tmp / "lyrics")
 isl.show()
+isl.history_ready.disconnect()  # never fold the real Windows clipboard history into the demo shots
 
 LYRICS = parse_lrc("""
 [01:10.00]Neon lights on a quiet street
@@ -180,6 +181,23 @@ def reset_state() -> None:
     isl._apply_mode()
 
 
+def demo_clips() -> None:
+    from isla.clipboard import Clip, ClipHistory
+    now = time.time()
+    isl.clips = ClipHistory()
+    isl.clips.clips = [Clip(t, now - age) for t, age in (
+        ("https://github.com/MszBen/Isla-Dynamic-Island", 20),
+        ("Invoice-March.pdf", 4 * 60),
+        ("Meet at the station at 6, bring the tickets!", 12 * 60),
+        ("pip install -r requirements.txt", 47 * 60),
+        ("ben@example.com", 3 * 3600),
+        ("Invoice #2043 is due on the 28th", 5 * 3600),
+        ("#B9A7FF", 26 * 3600),
+    )]
+    isl._clip_query = ""
+    isl._clip_flash = None
+
+
 def play_music() -> None:
     isl.media = MediaInfo(True, "Paper Moon", "The Quiet Hours", True, 70.0, 214.0)
     isl._media_stamp = time.monotonic()
@@ -221,6 +239,8 @@ def make_screenshots() -> None:
     isl.focus._last = time.monotonic(); isl.focus.remaining = 16 * 60 + 12; isl.focus.done = 1
     show("Focus"); isl.focus.remaining = 16 * 60 + 12; screenshot("focus")
     reset_state(); show("Shelf"); screenshot("shelf")
+    reset_state(); demo_clips(); show("Clips"); screenshot("clips")
+    reset_state(); demo_clips(); isl._clip_query = "invoice"; show("Clips"); screenshot("clips-search")
     reset_state(); start_claude(); show("Agents"); screenshot("agents")
     reset_state(); start_claude(); settle(0.8); screenshot("claude", 720, 90)
     reset_state(); hub.sessions["demo"] = __import__("isla.agents", fromlist=["Session"]).Session("demo", cwd="C:/Users/you/projects/isla")
