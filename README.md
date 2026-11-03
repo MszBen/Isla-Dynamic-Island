@@ -108,7 +108,7 @@ When Claude Code wants to run something, the request appears on the island. **Al
 
 | Do this | To get this |
 |---|---|
-| **Hover** over the island | It expands into **Music · Focus · Shelf · Agents** tabs |
+| **Hover** over the island | It expands into **Music · Focus · Shelf · Clips · Agents** tabs |
 | **Drop files** on it | They land on the shelf |
 | **Double-click** it | See-through and click-through until you move away |
 | **Right-click** it | Settings, quick tour, quit |
