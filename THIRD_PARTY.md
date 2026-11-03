@@ -7,7 +7,7 @@ Isla is licensed under the [PolyForm Noncommercial License 1.0.0](LICENSE). It i
 |---|---|---|
 | [PySide6 / Qt 6](https://doc.qt.io/qtforpython-6/) | The whole user interface | LGPL-3.0 (see below) |
 | [requests](https://requests.readthedocs.io) | Looking up lyrics | Apache-2.0 |
-| [winrt (pywinrt)](https://github.com/pywinrt/pywinrt) | Windows media controls | MIT |
+| [winrt (pywinrt)](https://github.com/pywinrt/pywinrt) | Windows media controls and clipboard history | MIT |
 | [PyInstaller](https://pyinstaller.org) | Building `Isla.exe` (its bootloader is inside the exe) | GPL-2.0 with a special exception that allows bundling in any app |
 | [Pillow](https://python-pillow.org) | Only for generating the icon and README images (not in `Isla.exe`) | MIT-CMU (HPND) |
 | [LRCLIB](https://lrclib.net) | Online lyrics service (a service, not bundled code) | see their site |

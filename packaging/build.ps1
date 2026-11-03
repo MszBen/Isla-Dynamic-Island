@@ -18,6 +18,7 @@ if ($LASTEXITCODE -ne 0) { throw "hook build failed" }
 python -m PyInstaller --noconfirm --clean --onefile --windowed --name Isla `
     --icon "$root\packaging\isla.ico" `
     --add-data "$root\build\hook-dir\isla-hook;isla-hook" `
+    --hidden-import winrt.windows.applicationmodel.datatransfer `
     --hidden-import winrt.windows.media.control `
     --hidden-import winrt.windows.storage.streams `
     --hidden-import winrt.windows.foundation `

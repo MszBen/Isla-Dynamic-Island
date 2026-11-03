@@ -23,6 +23,8 @@ from PySide6.QtWidgets import QFileIconProvider, QMenu, QToolTip, QWidget
 
 from . import hooks_install
 from .agents import AgentHub, Approval
+from .clipboard import ClipHistory, age_text
+from .clipsearch import ClipSearch
 from .config import Config
 from .confetti import Confetti
 from .lyrics import Line, current_index, fetch_lyrics
@@ -31,6 +33,7 @@ from .media import MediaInfo, MediaService
 from .focus import LABEL, LONG, SHORT, WORK, FocusTimer, format_clock
 from .shelf import Shelf
 from .sound import play_chime
+from .winclip import fetch_history
 from .system import fullscreen_app_active, set_click_through
 
 BG = QColor("#0C0B12")
@@ -64,13 +67,18 @@ TIPS = {
     "group": "These were added together. Drag to take them all, click to pick them all",
     "remove": "Remove from the shelf (the file itself is not deleted)",
     "clear": "Remove everything from the shelf (files are not deleted)",
+    "clip": "Click to copy this again",
+    "clip_remove": "Forget this clip",
+    "clip_search": "Type to search what you copied",
+    "clip_nosearch": "Stop searching and show everything",
+    "clip_clear": "Forget every clip",
     "deny": "Block this action",
     "once": "Allow just this one action",
     "always": "Allow it, and don't ask again for this",
     "connect": "Adds Isla's hooks to Claude Code's settings (a backup is made first)",
 }
 
-TABS = ("Music", "Focus", "Shelf", "Agents")
+TABS = ("Music", "Focus", "Shelf", "Clips", "Agents")
 STATUS_COLOR = {"idle": DIM, "working": ACCENT, "waiting": AMBER, "done": GREEN}
 
 
@@ -96,6 +104,7 @@ def fmt_time(s: float) -> str:
 
 class Island(QWidget):
     lyrics_ready = Signal(object, object)  # (artist, title), list[Line]
+    history_ready = Signal(object)  # list[(text, epoch)] from Windows' clipboard history
     open_settings = Signal()
     open_tour = Signal()
     quit_requested = Signal()
@@ -131,6 +140,13 @@ class Island(QWidget):
         self._hooks_checked = 0.0
         self._press_arg = None
         self._press: tuple[QPointF, str] | None = None
+        self.clips = ClipHistory()
+        self._clip_query = ""
+        self._clip_flash: tuple[str, float] | None = None  # text just re-copied from the island, and when
+        self._ignore_clip: str | None = None
+        self._search = ClipSearch()
+        self._search.textChanged.connect(self._on_clip_query)
+        self._search.closed.connect(self._on_search_closed)
         self._sel: set[str] = set()  # shelf paths picked for a multi-file drag
         self._press_ctrl = False
         self._last_active = time.monotonic()
@@ -170,11 +186,15 @@ class Island(QWidget):
         self._slow.start(1000)
 
         self.lyrics_ready.connect(self._on_lyrics)
+        self.history_ready.connect(self._on_history)
+        self._history_busy = False
+        self._refresh_history()
         media.changed.connect(self._on_media)
         hub.sessions_changed.connect(self._on_agents)
         hub.approval_requested.connect(self._on_approval)
         hub.approval_finished.connect(self._on_approval_done)
         hub.attention.connect(self._on_attention)
+        QGuiApplication.clipboard().dataChanged.connect(self._on_clipboard)
 
     # ------------------------------------------------------------------ mode
     @property
@@ -446,11 +466,59 @@ class Island(QWidget):
         # the shelf is where you carry files in and out, so it forgives a wider detour
         return int(self.cfg.collapse_delay_ms * (2.5 if self.tab == "Shelf" else 1))
 
+    def _on_clipboard(self) -> None:
+        mime = QGuiApplication.clipboard().mimeData()
+        if mime is None or not mime.hasText():
+            return
+        if any("ExcludeClipboardContent" in f for f in mime.formats()):  # password managers ask not to be recorded
+            return
+        text = mime.text()
+        if text == self._ignore_clip:  # we put it there ourselves; keep the list steady
+            self._ignore_clip = None
+            return
+        if self.clips.add(text):
+            self.update()
+
+    def _refresh_history(self) -> None:
+        """Pulls Windows' clipboard history on a worker thread (never blocks the UI)."""
+        if self._history_busy:
+            return
+        self._history_busy = True
+        self._pool.submit(lambda: self.history_ready.emit(fetch_history()))
+
+    def _on_history(self, entries) -> None:
+        self._history_busy = False
+        if self.clips.merge(entries):
+            self.update()
+
+    def _on_clip_query(self, text: str) -> None:
+        self._clip_query = text.strip()
+        self.update()
+
+    def _on_search_closed(self) -> None:
+        if not self.underMouse():
+            self._collapse.start(self._collapse_ms())
+        self.update()
+
+    def _open_search(self) -> None:
+        self._collapse.stop()
+        g = self.geometry()
+        self._search.open_at(g.left(), g.bottom() + 6, g.width(), self._clip_query)
+
+    def _copy_clip(self, text: str) -> None:
+        self._ignore_clip = text
+        QGuiApplication.clipboard().setText(text)
+        self._clip_flash = (text, time.monotonic())
+        self._kick()
+
     def _begin_hover(self) -> None:
         self._hover = True
         self._apply_mode()
 
     def _end_hover(self) -> None:
+        if self._search.isVisible():
+            return
+        self._clip_query = ""
         self._hover = self._dropping = False
         self._apply_mode()
 
@@ -543,6 +611,8 @@ class Island(QWidget):
             self._kick()
         elif kind == "tab":
             self.tab = arg
+            if arg == "Clips":
+                self._refresh_history()
         elif kind == "toggle":
             m.toggle()
         elif kind == "next":
@@ -576,6 +646,17 @@ class Island(QWidget):
             self.shelf.remove(arg)
         elif kind == "clear":
             self.shelf.clear()
+        elif kind == "clip":
+            self._copy_clip(arg)
+        elif kind == "clip_remove":
+            self.clips.remove(arg)
+        elif kind == "clip_clear":
+            self.clips.clear()
+            self._clip_query = ""
+        elif kind == "clip_search":
+            self._open_search()
+        elif kind == "clip_nosearch":
+            self._clip_query = ""
         elif kind == "connect":
             self._connect_claude()
         elif kind in ("deny", "once", "always"):
@@ -847,18 +928,18 @@ class Island(QWidget):
         self._mascot_at(p, QRectF(14, 8, 34, 34))
         x = 60.0
         for name in TABS:
-            tab = QRectF(x, 12, 84, 26)
+            tab = QRectF(x, 12, 68, 26)
             if name == self.tab:
                 p.setPen(Qt.NoPen)
                 p.setBrush(QColor(255, 255, 255, 30))
                 p.drawRoundedRect(tab, 13, 13)
             self._text(p, tab, name, TEXT if name == self.tab else DIM, 10, name == self.tab, Qt.AlignHCenter)
             self._hit_rect(tab, "tab", name)
-            x += 90
+            x += 72
         self._text(p, QRectF(r.width() - 104, 12, 90, 26), clock_text(), DIM, 10, align=Qt.AlignRight)
         {
             "Music": self._paint_music, "Focus": self._paint_focus,
-            "Shelf": self._paint_shelf, "Agents": self._paint_agents,
+            "Shelf": self._paint_shelf, "Clips": self._paint_clips, "Agents": self._paint_agents,
         }[self.tab](p, r)
 
     @staticmethod
@@ -1065,6 +1146,47 @@ class Island(QWidget):
         self._hit_rect(clear, "clear")
         if len(items) > 8:
             self._text(p, QRectF(r.width() - 230, r.height() - 24, 130, 18), f"+{len(items) - 8} older", DIM, 8, align=Qt.AlignRight)
+
+    def _paint_clips(self, p, r: QRectF) -> None:
+        shown = self.clips.search(self._clip_query)
+        box = QRectF(16, 50, r.width() - 32, 28)
+        p.setPen(QPen(self.accent if self._clip_query else QColor(255, 255, 255, 50), 1.2))
+        p.setBrush(QColor(255, 255, 255, 14))
+        p.drawRoundedRect(box, 14, 14)
+        self._text(p, QRectF(box.left() + 14, box.top(), box.width() - 52, box.height()),
+                   self._clip_query or "Search what you copied…", TEXT if self._clip_query else DIM, 10)
+        self._hit_rect(box, "clip_search")
+        if self._clip_query:
+            x = QRectF(box.right() - 30, box.top(), 28, box.height())
+            self._text(p, x, "×", DIM, 12, align=Qt.AlignHCenter)
+            self._hit_rect(x, "clip_nosearch")
+        if not shown:
+            msg, sub = (("Nothing matches that", "Try fewer or different words") if self._clip_query else
+                        ("Nothing copied yet", "Copy some text anywhere and it will show up here"))
+            self._text(p, QRectF(20, 108, r.width() - 40, 26), msg, TEXT, 12, True, Qt.AlignHCenter)
+            self._text(p, QRectF(20, 134, r.width() - 40, 20), sub, DIM, 9, align=Qt.AlignHCenter)
+            return
+        now = time.time()
+        flash = self._clip_flash if self._clip_flash and time.monotonic() - self._clip_flash[1] < 1.2 else None
+        for n, clip in enumerate(shown[:5]):
+            row = QRectF(16, 84 + n * 29, r.width() - 32, 27)
+            copied = bool(flash and flash[0] == clip.text)
+            p.setPen(Qt.NoPen)
+            p.setBrush(QColor(185, 167, 255, 50) if copied else QColor(255, 255, 255, 14))
+            p.drawRoundedRect(row, 10, 10)
+            self._text(p, QRectF(row.left() + 10, row.top(), row.width() - 82, row.height()), clip.preview, TEXT, 10)
+            self._text(p, QRectF(row.right() - 76, row.top(), 48, row.height()),
+                       "Copied" if copied else age_text(now - clip.when), self.accent if copied else DIM, 8, align=Qt.AlignRight)
+            x = QRectF(row.right() - 26, row.top(), 24, row.height())
+            self._text(p, x, "×", DIM, 11, align=Qt.AlignHCenter)
+            self._hit_rect(row, "clip", clip.text)
+            self._hit_rect(x, "clip_remove", clip.text)
+        more = len(shown) - 5
+        self._text(p, QRectF(18, r.height() - 22, 300, 18),
+                   (f"+{more} more · " if more > 0 else "") + "Click a clip to copy it again", DIM, 8)
+        clear = QRectF(r.width() - 92, r.height() - 24, 76, 20)
+        self._text(p, clear, "Clear all", DIM, 8, align=Qt.AlignRight)
+        self._hit_rect(clear, "clip_clear")
 
     def _paint_agents(self, p, r: QRectF) -> None:
         sessions = self.hub.snapshot()

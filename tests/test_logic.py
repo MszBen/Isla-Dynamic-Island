@@ -220,7 +220,7 @@ def test_every_island_button_has_a_hover_hint():
     import re
     from isla.island import TIPS
     src = open("isla/island.py", encoding="utf-8").read()
-    kinds = set(re.findall(r'"(focus_(?:toggle|reset|skip|break|minus|plus)|connect|clear|deny|once|always|remove|tile|group|seek|bar|prev|next|toggle|mascot)"', src))
+    kinds = set(re.findall(r'"(focus_(?:toggle|reset|skip|break|minus|plus)|connect|clear|deny|once|always|remove|tile|group|clip|clip_remove|clip_search|clip_nosearch|clip_clear|seek|bar|prev|next|toggle|mascot)"', src))
     self_explanatory = {"focus_toggle"}
     assert {k for k in kinds if k not in TIPS} <= self_explanatory
 
@@ -242,6 +242,32 @@ def test_shelf_groups_files_added_together(tmp_path):
     assert [len(b) for b in s.blocks()] == [1, 1, 1]
     store.write_text(json.dumps([files[0]]))  # old format: plain list of paths
     assert [i.name for i in Shelf(store).items] == ["a.txt"]
+
+
+def test_clip_history_dedupes_searches_and_caps():
+    from isla.clipboard import ClipHistory
+    h = ClipHistory(limit=3)
+    assert not h.add("   ")
+    for t in ("alpha one", "Beta two", "alpha one", "gamma"):
+        h.add(t)
+    assert [c.text for c in h.clips] == ["gamma", "alpha one", "Beta two"]  # re-copy moved to top
+    assert [c.text for c in h.search("TWO beta")] == ["Beta two"]
+    h.add("delta")
+    assert len(h.clips) == 3 and h.search("beta") == []
+    h.remove("gamma")
+    assert [c.text for c in h.clips] == ["delta", "alpha one"]
+
+
+def test_clip_history_merges_windows_history_without_resurrecting_forgotten_clips():
+    from isla.clipboard import ClipHistory
+    h = ClipHistory()
+    h.add("mine")
+    assert h.merge([("older", 1.0), ("mine", 5.0), ("  ", 9.0)])
+    assert [c.text for c in h.clips] == ["mine", "older"]  # ours stays, blanks ignored, newest first
+    h.remove("older")
+    assert not h.merge([("older", 1.0)])  # forgotten stays forgotten
+    h.add("older")  # ...until copied again
+    assert "older" in [c.text for c in h.clips]
 
 
 def test_shelf_clear_and_config_defaults(tmp_path):
