@@ -440,7 +440,11 @@ class Island(QWidget):
     def leaveEvent(self, e) -> None:
         self._expand.stop()
         if not self._dragging_out:
-            self._collapse.start(self.cfg.collapse_delay_ms)
+            self._collapse.start(self._collapse_ms())
+
+    def _collapse_ms(self) -> int:
+        # the shelf is where you carry files in and out, so it forgives a wider detour
+        return int(self.cfg.collapse_delay_ms * (2.5 if self.tab == "Shelf" else 1))
 
     def _begin_hover(self) -> None:
         self._hover = True
@@ -458,7 +462,7 @@ class Island(QWidget):
             self._apply_mode()
 
     def dragLeaveEvent(self, e) -> None:
-        self._collapse.start(self.cfg.collapse_delay_ms)
+        self._collapse.start(self._collapse_ms())
 
     def dropEvent(self, e) -> None:
         paths = [u.toLocalFile() for u in e.mimeData().urls() if u.isLocalFile()]
@@ -611,7 +615,7 @@ class Island(QWidget):
         drag.exec(Qt.CopyAction)
         self._dragging_out = False
         if not self.underMouse():
-            self._collapse.start(self.cfg.collapse_delay_ms)
+            self._collapse.start(self._collapse_ms())
 
     def mouseReleaseEvent(self, e) -> None:
         if self._press and self._press[1] == "group":
