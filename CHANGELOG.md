@@ -5,6 +5,8 @@ Add entries under **Unreleased** as you work; `packaging/release.py` stamps them
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-11-03
+
 ### Added
 - **Clips tab**: remembers what you copy and lets you search it. Pulls in Windows' own clipboard history (Win+V) too, skips copies from password managers, and keeps history in memory only.
 - **Shelf groups and multi-drag**: files dropped together stay grouped. Drag a whole group, Ctrl+click to pick several items and drag them together, or drag one at a time.
