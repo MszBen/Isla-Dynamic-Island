@@ -272,6 +272,7 @@ def test_clip_history_merges_windows_history_without_resurrecting_forgotten_clip
 
 def test_shelf_clear_and_config_defaults(tmp_path):
     from isla.config import Config
+    assert Config().display == ""  # follows Windows' main display
     f = tmp_path / "a.txt"
     f.write_text("x")
     s = Shelf(tmp_path / "s.json")

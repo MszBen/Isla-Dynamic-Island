@@ -4,7 +4,7 @@ from __future__ import annotations
 from PySide6.QtCore import QEasingCurve, QRectF, Qt, QVariantAnimation
 from PySide6.QtGui import QColor, QGuiApplication, QPainter, QPixmap
 from PySide6.QtWidgets import (
-    QCheckBox, QFrame, QHBoxLayout, QLabel, QPushButton, QScrollArea, QSlider, QVBoxLayout, QWidget,
+    QCheckBox, QComboBox, QFrame, QHBoxLayout, QLabel, QPushButton, QScrollArea, QSlider, QVBoxLayout, QWidget,
 )
 
 from . import __version__, hooks_install
@@ -34,6 +34,15 @@ QPushButton:disabled { color: rgba(242,240,250,0.3); background: rgba(255,255,25
 QPushButton#primary { background: #B9A7FF; color: #0C0B12; font-weight: 600; }
 QPushButton#primary:hover { background: #CABCFF; }
 QPushButton#primary:disabled { background: rgba(185,167,255,0.25); color: rgba(12,11,18,0.5); }
+QComboBox {
+    background: rgba(255,255,255,0.09); border: none; border-radius: 14px; padding: 0 14px; min-height: 28px; min-width: 190px;
+}
+QComboBox:hover { background: rgba(255,255,255,0.15); }
+QComboBox::drop-down { border: none; width: 22px; }
+QComboBox QAbstractItemView {
+    background: #17151F; border: 1px solid rgba(255,255,255,0.12); outline: none;
+    selection-background-color: #B9A7FF; selection-color: #0C0B12; padding: 4px;
+}
 QSlider::groove:horizontal { height: 6px; border-radius: 3px; background: rgba(255,255,255,0.14); }
 QSlider::sub-page:horizontal { border-radius: 3px; background: #B9A7FF; }
 QSlider::handle:horizontal {
@@ -110,6 +119,7 @@ class Card(QFrame):
             line.setObjectName("divider")
             self._lay.addWidget(line)
         self._rows += 1
+        divider = line if self._rows > 1 else None
         box = QWidget()
         h = QHBoxLayout(box)
         h.setContentsMargins(0, 12, 0, 12)
@@ -124,6 +134,7 @@ class Card(QFrame):
         if control is not None:
             h.addWidget(control, 0, Qt.AlignVCenter)
         self._lay.addWidget(box)
+        self.last_row = [w for w in (divider, box) if w is not None]  # lets a caller hide the whole row
         return hint_label
 
 
@@ -134,6 +145,7 @@ class SettingsWindow(QWidget):
         self._on_focus_change = on_focus_change
         self.on_tour = None   # set by the app: open the quick tour
         self.on_quit = None   # set by the app: quit Isla
+        self.on_display = None  # set by the app: move the island to the chosen display
         self.setObjectName("root")
         self.setWindowTitle("Isla Settings")
         self.setMinimumWidth(500)
@@ -182,6 +194,15 @@ class SettingsWindow(QWidget):
         card.row("Start with Windows", self.autostart, "Open Isla automatically when you sign in")
         root.addWidget(card)
         root.addSpacing(6)
+        self.display = QComboBox()
+        self.display.setCursor(Qt.PointingHandCursor)
+        self.display.activated.connect(self._on_display)
+        card.row("Display", self.display, "Which screen the island sits on")
+        self._display_row = card.last_row
+        self._refresh_displays()
+        app = QGuiApplication.instance()
+        for sig in (app.screenAdded, app.screenRemoved):
+            sig.connect(lambda *_: self._refresh_displays())
 
         # island
         root.addWidget(_label("ISLAND", "section"))
@@ -310,6 +331,30 @@ class SettingsWindow(QWidget):
         except OSError:
             self.autostart.blockSignals(True)
             self.autostart.setChecked(autostart_enabled())
+    def _refresh_displays(self) -> None:
+        """Lists the connected screens; the whole row is hidden when there is only one to choose from."""
+        screens = QGuiApplication.screens()
+        main = QGuiApplication.primaryScreen()
+        self.display.blockSignals(True)
+        self.display.clear()
+        self.display.addItem("Main display", "")
+        for n, scr in enumerate(screens, 1):
+            size = scr.geometry().size()
+            tag = " (main)" if scr is main else ""
+            self.display.addItem(f"Display {n}{tag} · {size.width()}×{size.height()}", scr.name())
+        saved = self.cfg.display
+        if saved and saved not in {s.name() for s in screens}:
+            self.display.addItem("Saved display (not connected)", saved)
+        self.display.setCurrentIndex(max(0, self.display.findData(saved)))
+        self.display.blockSignals(False)
+        for w in self._display_row:
+            w.setVisible(len(screens) > 1 or bool(saved))
+
+    def _on_display(self, index: int) -> None:
+        self._set("display", self.display.itemData(index) or "")
+        if self.on_display:
+            self.on_display()
+
             self.autostart.blockSignals(False)
 
     def _hooks(self, install: bool) -> None:

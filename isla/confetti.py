@@ -87,8 +87,8 @@ class Confetti(QWidget):
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._tick)
 
-    def burst(self, style: str = "focus", count: int = 120) -> None:
-        scr = QGuiApplication.primaryScreen().geometry()
+    def burst(self, style: str = "focus", count: int = 120, screen=None) -> None:
+        scr = (screen or QGuiApplication.primaryScreen()).geometry()
         self.setGeometry(scr.x() + (scr.width() - self.W) // 2, scr.y(), self.W, self.H)
         self.particles += spawn(count, (self.W / 2, 30), PALETTES.get(style, PALETTES["focus"]))
         self._last = time.monotonic()

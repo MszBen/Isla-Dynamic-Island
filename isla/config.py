@@ -20,6 +20,7 @@ class Config:
     collapse_delay_ms: int = 450
     approval_timeout_s: int = 110
     hide_in_fullscreen: bool = True
+    display: str = ""  # screen name Isla lives on; "" = Windows' main display
     lyrics_enabled: bool = True
     ghost_opacity: float = 0.22
     status_peeks: bool = True

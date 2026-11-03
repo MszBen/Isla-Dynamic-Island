@@ -196,6 +196,9 @@ class Island(QWidget):
         hub.attention.connect(self._on_attention)
         QGuiApplication.clipboard().dataChanged.connect(self._on_clipboard)
 
+        for sig in (QGuiApplication.instance().screenAdded, QGuiApplication.instance().screenRemoved,
+                    QGuiApplication.instance().primaryScreenChanged):
+            sig.connect(lambda *_: self.apply_display())  # a monitor was plugged in / removed
     # ------------------------------------------------------------------ mode
     @property
     def mode(self) -> str:
@@ -292,7 +295,7 @@ class Island(QWidget):
         self._place(self._size)
 
     def _place(self, size: QSizeF) -> None:
-        scr = QGuiApplication.primaryScreen().geometry()
+        scr = self.screen_for_island().geometry()
         w, h = max(int(size.width()), 60), max(int(size.height()), 30)
         self.setGeometry(scr.x() + (scr.width() - w) // 2, scr.y() + 8, w, h)
 
@@ -300,6 +303,17 @@ class Island(QWidget):
     def _kick(self) -> None:
         if not self._frame.isActive():
             self._frame.start(33)
+    def screen_for_island(self):
+        """The display chosen in Settings, or the main one if it's not chosen or not plugged in."""
+        for scr in QGuiApplication.screens():
+            if self.cfg.display and scr.name() == self.cfg.display:
+                return scr
+        return QGuiApplication.primaryScreen()
+
+    def apply_display(self) -> None:
+        self._place(self._size)
+        self.update()
+
 
     def _tick(self) -> None:
         self.mascot.update()
@@ -437,7 +451,7 @@ class Island(QWidget):
     def celebrate(self, style: str) -> None:
         """Confetti burst from the island (skipped when hidden for a fullscreen app)."""
         if self.cfg.confetti and self.isVisible():
-            self.confetti.burst(style)
+            self.confetti.burst(style, screen=self.screen_for_island())
 
     def _clear_peek(self, peek) -> None:
         if self._peek is peek:
