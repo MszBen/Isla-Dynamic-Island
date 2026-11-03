@@ -17,7 +17,7 @@ from PySide6.QtCore import (
 )
 from PySide6.QtGui import (
     QColor, QCursor, QDrag, QFont, QFontMetrics, QGuiApplication, QPainter, QLinearGradient, QPainterPath, QPen,
-    QPixmap, QPolygonF,
+    QPixmap, QPolygonF, QTransform,
 )
 from PySide6.QtWidgets import QFileIconProvider, QMenu, QToolTip, QWidget
 
@@ -53,6 +53,7 @@ SIZES = {"expanded": (500, 248), "approval": (470, 132), "toast": (330, 44), "pe
 # Hover hints for the painted buttons (keyed by hit kind). Kinds not listed are self-explanatory.
 TIPS = {
     "mascot": "Hi! Poke me",
+    "cog": "Open Isla's settings",
     "toggle": "Play / pause",
     "next": "Next track",
     "prev": "Previous track",
@@ -195,10 +196,10 @@ class Island(QWidget):
         hub.approval_finished.connect(self._on_approval_done)
         hub.attention.connect(self._on_attention)
         QGuiApplication.clipboard().dataChanged.connect(self._on_clipboard)
-
         for sig in (QGuiApplication.instance().screenAdded, QGuiApplication.instance().screenRemoved,
                     QGuiApplication.instance().primaryScreenChanged):
             sig.connect(lambda *_: self.apply_display())  # a monitor was plugged in / removed
+
     # ------------------------------------------------------------------ mode
     @property
     def mode(self) -> str:
@@ -266,6 +267,8 @@ class Island(QWidget):
             if i >= 0 and self.lines[i].text:
                 return self.lines[i].text
             return f"{m.title} — {m.artist}" if m.artist else m.title
+        if self.mascot.tinkering:
+            return "Tinkering with my settings…"
         return clock_text()
 
     def _target_size(self) -> tuple[float, float]:
@@ -294,15 +297,12 @@ class Island(QWidget):
         self._size = QSizeF(v)
         self._place(self._size)
 
-    def _place(self, size: QSizeF) -> None:
-        scr = self.screen_for_island().geometry()
-        w, h = max(int(size.width()), 60), max(int(size.height()), 30)
-        self.setGeometry(scr.x() + (scr.width() - w) // 2, scr.y() + 8, w, h)
+    def set_settings_open(self, on: bool) -> None:
+        self.mascot.tinkering = on
+        self._apply_mode()
+        self._kick()
+        self.update()
 
-    # ----------------------------------------------------------------- timers
-    def _kick(self) -> None:
-        if not self._frame.isActive():
-            self._frame.start(33)
     def screen_for_island(self):
         """The display chosen in Settings, or the main one if it's not chosen or not plugged in."""
         for scr in QGuiApplication.screens():
@@ -314,6 +314,15 @@ class Island(QWidget):
         self._place(self._size)
         self.update()
 
+    def _place(self, size: QSizeF) -> None:
+        scr = self.screen_for_island().geometry()
+        w, h = max(int(size.width()), 60), max(int(size.height()), 30)
+        self.setGeometry(scr.x() + (scr.width() - w) // 2, scr.y() + 8, w, h)
+
+    # ----------------------------------------------------------------- timers
+    def _kick(self) -> None:
+        if not self._frame.isActive():
+            self._frame.start(33)
 
     def _tick(self) -> None:
         self.mascot.update()
@@ -660,6 +669,8 @@ class Island(QWidget):
             self.shelf.remove(arg)
         elif kind == "clear":
             self.shelf.clear()
+        elif kind == "cog":
+            self.open_settings.emit()
         elif kind == "clip":
             self._copy_clip(arg)
         elif kind == "clip_remove":
@@ -792,20 +803,23 @@ class Island(QWidget):
         self._hit_rect(rect, "mascot")
 
     def _paint_compact(self, p, r: QRectF) -> None:
+        lead = 46.0
         self._mascot_at(p, QRectF(10, (r.height() - 26) / 2, 26, 26))
         playing = self.media.active and self.media.playing and not self._claude and not self.focus.active
         if self._claude:
-            self._text(p, QRectF(46, 0, r.width() - 46 - 36, r.height()), self._compact_text(), CLAUDE_INK, 10, True)
+            self._text(p, QRectF(lead, 0, r.width() - lead - 36, r.height()), self._compact_text(), CLAUDE_INK, 10, True)
             pulse = 3.2 + 1.2 * math.sin(time.monotonic() * 4)
             p.setPen(Qt.NoPen)
             p.setBrush(CLAUDE_INK)
             p.drawEllipse(QPointF(r.width() - 22, r.height() / 2), pulse, pulse)
         elif self.focus.active:
-            self._text(p, QRectF(46, 0, r.width() - 46 - 40, r.height()), self._compact_text(), size=10)
+            self._text(p, QRectF(lead, 0, r.width() - lead - 40, r.height()), self._compact_text(), size=10)
             self._ring(p, QRectF(r.width() - 32, r.height() / 2 - 9, 18, 18), self.focus.progress, 3.0,
                        self.accent if self.focus.phase == WORK else GREEN)
         elif playing:
-            self._text(p, QRectF(46, 0, r.width() - 46 - 40, r.height()), self._compact_text(), size=10)
+            self._text(p, QRectF(lead, 0, r.width() - lead - 40, r.height()), self._compact_text(), size=10)
+        elif self.mascot.tinkering:
+            self._text(p, QRectF(lead, 0, r.width() - lead - 12, r.height()), self._compact_text(), TEXT, 10, True)
         else:  # just the clock: centred in the whole pill
             self._text(p, QRectF(0, 0, r.width(), r.height()), self._compact_text(), size=10, align=Qt.AlignHCenter)
         if playing:
@@ -942,19 +956,43 @@ class Island(QWidget):
         self._mascot_at(p, QRectF(14, 8, 34, 34))
         x = 60.0
         for name in TABS:
-            tab = QRectF(x, 12, 68, 26)
+            tab = QRectF(x, 12, 62, 26)
             if name == self.tab:
                 p.setPen(Qt.NoPen)
                 p.setBrush(QColor(255, 255, 255, 30))
                 p.drawRoundedRect(tab, 13, 13)
             self._text(p, tab, name, TEXT if name == self.tab else DIM, 10, name == self.tab, Qt.AlignHCenter)
             self._hit_rect(tab, "tab", name)
-            x += 72
-        self._text(p, QRectF(r.width() - 104, 12, 90, 26), clock_text(), DIM, 10, align=Qt.AlignRight)
+            x += 66
+        self._text(p, QRectF(r.width() - 118, 12, 86, 26), clock_text(), DIM, 10, align=Qt.AlignRight)
+        self._cog(p, QRectF(r.width() - 32, 14, 22, 22))
         {
             "Music": self._paint_music, "Focus": self._paint_focus,
             "Shelf": self._paint_shelf, "Clips": self._paint_clips, "Agents": self._paint_agents,
         }[self.tab](p, r)
+
+    def _cog(self, p, rect: QRectF) -> None:
+        """Settings button: a little gear that slowly turns while settings are open."""
+        busy = self.mascot.tinkering
+        c = rect.center()
+        path = QPainterPath()
+        path.addEllipse(QPointF(0, 0), 6.2, 6.2)
+        for k in range(8):
+            tooth = QPainterPath()
+            tooth.addRoundedRect(QRectF(-1.9, -9.2, 3.8, 5), 1, 1)
+            path = path.united(QTransform().rotate(k * 45).map(tooth))
+        hole = QPainterPath()
+        hole.addEllipse(QPointF(0, 0), 2.6, 2.6)
+        p.save()
+        p.setRenderHint(QPainter.Antialiasing)
+        p.translate(c)
+        if busy:
+            p.rotate(time.monotonic() * 40)
+        p.setPen(Qt.NoPen)
+        p.setBrush(self.accent if busy else DIM)
+        p.drawPath(path.subtracted(hole))
+        p.restore()
+        self._hit_rect(rect.adjusted(-3, -3, 3, 3), "cog")
 
     @staticmethod
     def _ring(p, rect: QRectF, progress: float, width: float, color: QColor) -> None:

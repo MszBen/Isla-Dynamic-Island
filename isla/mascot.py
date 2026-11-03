@@ -12,6 +12,10 @@ BODY = QColor("#B9A7FF")
 INK = QColor("#1B1530")
 PINK = QColor("#FF7AA8")
 
+METAL = QColor("#C9C5DA")
+METAL_DARK = QColor("#6E6A85")
+SPARK = QColor("#FFD36B")
+
 EMOTIONS = ("idle", "happy", "curious", "focused", "wink", "love", "dizzy", "sleepy", "music")
 
 
@@ -24,6 +28,7 @@ class Mascot:
         self._next_blink = time.monotonic() + 2
         self._blink_end = 0.0
         self._pokes: list[float] = []
+        self.tinkering = False  # settings are open: head open, robot arms at work
 
     # -- state ---------------------------------------------------------
     def set_rest(self, emotion: str) -> None:
@@ -50,7 +55,7 @@ class Mascot:
 
     @property
     def animating(self) -> bool:
-        return self.emotion != "idle" or time.monotonic() < self._blink_end
+        return self.emotion != "idle" or self.tinkering or time.monotonic() < self._blink_end
 
     # -- painting ------------------------------------------------------
     def paint(self, p: QPainter, rect: QRectF) -> None:
@@ -70,6 +75,8 @@ class Mascot:
             tilt = 9
         elif e == "sleepy":
             bob = math.sin(t * 1.5) * s * 0.03
+        if self.tinkering:  # hold still while the arms work, whatever she was doing before
+            bob = tilt = 0.0
 
         p.save()
         p.setRenderHint(QPainter.Antialiasing)
@@ -86,7 +93,11 @@ class Mascot:
         p.setBrush(QColor(255, 255, 255, 60))  # highlight
         p.drawEllipse(QRectF(-26, -26, 20, 10))
 
+        if self.tinkering:
+            self._cavity(p, t)
         self._face(p, e, blinking, t)
+        if self.tinkering:
+            self._arms(p, t)
         p.restore()
 
         if e == "curious":
@@ -98,6 +109,68 @@ class Mascot:
             p.setFont(QFont("Segoe UI", max(6, int(s * 0.22)), QFont.Bold))
             p.setPen(QColor("#9FB6FF"))
             p.drawText(QPointF(cx + s * 0.30, cy - s * 0.25 - (t * 6) % 6), "z")
+
+    def _cavity(self, p: QPainter, t: float) -> None:
+        """The top of her head is open, with two gears turning inside."""
+        p.setPen(QPen(METAL_DARK, 2.5))
+        p.setBrush(QColor("#2A2150"))
+        p.drawRoundedRect(QRectF(-27, -41, 54, 17), 7, 7)
+        for cx, r, spin, color in ((-10, 6.5, 1, SPARK), (7, 5, -1.3, QColor("#FF9F5A"))):
+            p.save()
+            p.translate(cx, -33)
+            p.rotate(t * 120 * spin)
+            p.setPen(Qt.NoPen)
+            p.setBrush(color)
+            for _ in range(8):
+                p.rotate(45)
+                p.drawRoundedRect(QRectF(-1.6, -r - 2.4, 3.2, 4), 1, 1)
+            p.drawEllipse(QPointF(0, 0), r, r)
+            p.setBrush(QColor("#2A2150"))
+            p.drawEllipse(QPointF(0, 0), r * 0.38, r * 0.38)
+            p.restore()
+
+    @staticmethod
+    def _elbow(base: QPointF, tip: QPointF, l1: float, l2: float, bend: float) -> QPointF:
+        """Two-segment arm: where the elbow sits so the hand reaches `tip` (bend = +1 / -1 picks the side)."""
+        dx, dy = tip.x() - base.x(), tip.y() - base.y()
+        d = min(math.hypot(dx, dy), l1 + l2 - 0.01)
+        a = (l1 * l1 - l2 * l2 + d * d) / (2 * d)
+        h = math.sqrt(max(l1 * l1 - a * a, 0.0))
+        ux, uy = dx / (d or 1), dy / (d or 1)
+        return QPointF(base.x() + ux * a - uy * h * bend, base.y() + uy * a + ux * h * bend)
+
+    def _arms(self, p: QPainter, t: float) -> None:
+        """Two robot arms reaching in from the sides, each holding a tool that works on the gears."""
+        for side, phase in ((-1, 0.0), (1, 1.7)):
+            base = QPointF(side * 54, 32)
+            tip = QPointF(side * (30 + 4 * math.sin(t * 6 + phase)), -40 + 3 * math.cos(t * 8 + phase))
+            elbow = self._elbow(base, tip, 42, 44, side)
+            p.setBrush(Qt.NoBrush)
+            p.setPen(QPen(METAL_DARK, 11, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+            p.drawPolyline([base, elbow, tip])
+            p.setPen(QPen(METAL, 7, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+            p.drawPolyline([base, elbow, tip])
+            p.setPen(Qt.NoPen)
+            p.setBrush(METAL_DARK)
+            p.drawEllipse(base, 6.5, 6.5)
+            p.drawEllipse(elbow, 6, 6)
+            p.setBrush(METAL)
+            p.drawEllipse(elbow, 2.6, 2.6)
+            # tool: orange handle, steel shaft that pokes at the gears
+            poke = 4 * math.sin(t * 9 + phase)
+            handle_end = QPointF(tip.x() - side * 7, tip.y() + 2)
+            tool_end = QPointF(tip.x() - side * (17 + poke), tip.y() + 6 + poke * 0.5)
+            p.setPen(QPen(QColor("#E8E6F2"), 3, Qt.SolidLine, Qt.RoundCap))
+            p.drawLine(handle_end, tool_end)
+            p.setPen(QPen(QColor("#FF9F5A"), 7, Qt.SolidLine, Qt.RoundCap))
+            p.drawLine(tip, handle_end)
+            if math.sin(t * 9 + phase) > 0.2:  # sparks fly where the tool touches
+                p.setPen(Qt.NoPen)
+                p.setBrush(SPARK)
+                for k in range(3):
+                    ang = math.radians(-90 + (k - 1) * 55 + side * 20)
+                    d = 4 + 5 * math.sin(t * 9 + phase)
+                    p.drawEllipse(QPointF(tool_end.x() + math.cos(ang) * d, tool_end.y() + math.sin(ang) * d), 1.8, 1.8)
 
     def _face(self, p: QPainter, e: str, blinking: bool, t: float) -> None:
         lx, rx, ey = -17, 17, -6

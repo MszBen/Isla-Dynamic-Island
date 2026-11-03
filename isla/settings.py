@@ -1,7 +1,7 @@
 """Standalone settings window (a normal window, separate from the island), styled like Isla."""
 from __future__ import annotations
 
-from PySide6.QtCore import QEasingCurve, QRectF, Qt, QVariantAnimation
+from PySide6.QtCore import QEasingCurve, QRectF, Qt, QVariantAnimation, Signal
 from PySide6.QtGui import QColor, QGuiApplication, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QFrame, QHBoxLayout, QLabel, QPushButton, QScrollArea, QSlider, QVBoxLayout, QWidget,
@@ -139,13 +139,15 @@ class Card(QFrame):
 
 
 class SettingsWindow(QWidget):
+    shown_changed = Signal(bool)  # opened / closed, so the island's mascot can react
+
     def __init__(self, cfg: Config, hub: AgentHub, on_focus_change=None):
         super().__init__()
         self.cfg, self.hub = cfg, hub
         self._on_focus_change = on_focus_change
+        self.on_display = None  # set by the app: move the island to the chosen display
         self.on_tour = None   # set by the app: open the quick tour
         self.on_quit = None   # set by the app: quit Isla
-        self.on_display = None  # set by the app: move the island to the chosen display
         self.setObjectName("root")
         self.setWindowTitle("Isla Settings")
         self.setMinimumWidth(500)
@@ -192,8 +194,6 @@ class SettingsWindow(QWidget):
         self.autostart.toggled.connect(self._on_autostart)
         card = Card()
         card.row("Start with Windows", self.autostart, "Open Isla automatically when you sign in")
-        root.addWidget(card)
-        root.addSpacing(6)
         self.display = QComboBox()
         self.display.setCursor(Qt.PointingHandCursor)
         self.display.activated.connect(self._on_display)
@@ -203,6 +203,8 @@ class SettingsWindow(QWidget):
         app = QGuiApplication.instance()
         for sig in (app.screenAdded, app.screenRemoved):
             sig.connect(lambda *_: self._refresh_displays())
+        root.addWidget(card)
+        root.addSpacing(6)
 
         # island
         root.addWidget(_label("ISLAND", "section"))
@@ -284,6 +286,10 @@ class SettingsWindow(QWidget):
         screen = QGuiApplication.primaryScreen().availableGeometry()
         self.resize(540, min(content.sizeHint().height() + 4, int(screen.height() * 0.88)))
 
+    def hideEvent(self, e) -> None:
+        super().hideEvent(e)
+        self.shown_changed.emit(False)
+
     # -- helpers -------------------------------------------------------
     def _slider(self, lo: int, hi: int, value: int, fmt: str, name: str, step: int, scale: float = 1.0):
         s = QSlider(Qt.Horizontal)
@@ -325,12 +331,6 @@ class SettingsWindow(QWidget):
         if name.startswith("focus_") and self._on_focus_change:
             self._on_focus_change()
 
-    def _on_autostart(self, on: bool) -> None:
-        try:
-            set_autostart(on)
-        except OSError:
-            self.autostart.blockSignals(True)
-            self.autostart.setChecked(autostart_enabled())
     def _refresh_displays(self) -> None:
         """Lists the connected screens; the whole row is hidden when there is only one to choose from."""
         screens = QGuiApplication.screens()
@@ -355,6 +355,12 @@ class SettingsWindow(QWidget):
         if self.on_display:
             self.on_display()
 
+    def _on_autostart(self, on: bool) -> None:
+        try:
+            set_autostart(on)
+        except OSError:
+            self.autostart.blockSignals(True)
+            self.autostart.setChecked(autostart_enabled())
             self.autostart.blockSignals(False)
 
     def _hooks(self, install: bool) -> None:
@@ -376,6 +382,7 @@ class SettingsWindow(QWidget):
         self.remove.setEnabled(on)
 
     def showEvent(self, e) -> None:
+        self.shown_changed.emit(True)
         self._refresh_hooks()
         self.autostart.blockSignals(True)
         self.autostart.setChecked(autostart_enabled())

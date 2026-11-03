@@ -220,7 +220,7 @@ def test_every_island_button_has_a_hover_hint():
     import re
     from isla.island import TIPS
     src = open("isla/island.py", encoding="utf-8").read()
-    kinds = set(re.findall(r'"(focus_(?:toggle|reset|skip|break|minus|plus)|connect|clear|deny|once|always|remove|tile|group|clip|clip_remove|clip_search|clip_nosearch|clip_clear|seek|bar|prev|next|toggle|mascot)"', src))
+    kinds = set(re.findall(r'"(focus_(?:toggle|reset|skip|break|minus|plus)|connect|clear|deny|once|always|remove|cog|tile|group|clip|clip_remove|clip_search|clip_nosearch|clip_clear|seek|bar|prev|next|toggle|mascot)"', src))
     self_explanatory = {"focus_toggle"}
     assert {k for k in kinds if k not in TIPS} <= self_explanatory
 

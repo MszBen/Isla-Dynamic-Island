@@ -101,6 +101,7 @@ def run() -> int:
     menu = QMenu()
     settings = SettingsWindow(cfg, hub, island.apply_focus_config)
     settings.on_display = island.apply_display
+    settings.shown_changed.connect(island.set_settings_open)
 
     def bring_to_front(w) -> None:
         w.show()
