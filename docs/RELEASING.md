@@ -12,24 +12,13 @@ The normal way is **automatic**: push a tag and GitHub Actions builds the exe an
 ## Each release
 
 1. **Pick a version** following [semver](https://semver.org): `0.1.0` for the first, `0.1.1` for fixes, `0.2.0` for new features.
-2. **Bump it** in `isla/__init__.py`:
-   ```python
-   __version__ = "0.1.0"
-   ```
-3. **Check it works**:
+2. **Note what changed** under `## [Unreleased]` in `CHANGELOG.md`, and (optionally) write `docs/release-notes/vX.Y.Z.md`, the text shown on the GitHub release.
+3. **Check it works**: `python -m pytest`, then `powershell -ExecutionPolicy Bypass -File packaging\build.ps1` and click around `dist\Isla.exe`.
+4. **Cut it**: this runs the tests, bumps `isla/__init__.py` (the single source of truth), stamps the changelog, commits and creates an annotated tag. It refuses on a dirty tree or off `main`, and never pushes.
    ```bash
-   python -m pytest
-   powershell -ExecutionPolicy Bypass -File packaging\build.ps1
-   dist\Isla.exe
-   ```
-   Click around the built exe (the music tab, shelf, focus timer, **Connect** for Claude Code).
-4. **Commit and tag**:
-   ```bash
-   git add -A
-   git commit -m "Release 0.1.0"
-   git tag v0.1.0
-   git push origin main
-   git push origin v0.1.0
+   python packaging/release.py minor --dry-run   # preview: patch | minor | major | X.Y.Z[-pre.N]
+   python packaging/release.py minor
+   git push origin main vX.Y.Z                   # the command the script prints; this starts the build
    ```
 5. **Watch it build**: GitHub → **Actions → Release**. After about 5-8 minutes the run finishes green.
 6. **Check the release**: GitHub → **Releases**. You'll see `v0.1.0` with `Isla.exe` and `Isla.exe.sha256` attached, and
